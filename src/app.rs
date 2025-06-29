@@ -1,29 +1,28 @@
 use bevy_ecs::prelude::*;
+use bevy_ecs::{event::Events, schedule::ScheduleLabel};
 use eframe::{
     egui::{self},
-    egui_wgpu::Callback,
 };
 use std::sync::Arc;
-use bevy_ecs::{
-    event::Events,
-    schedule::{ScheduleLabel},
-};
 
 use crate::{
     config::Config,
     ecs::{
-        counter::{increment_counter_system, Counter},
-        framerate::{frame_rate_system, FrameRate},
-        rotation::{update_angle_system, DragDelta, RotationAngle},
+        counter::{Counter, increment_counter_system},
+        framerate::{FrameRate, frame_rate_system},
+        rotation::{DragDelta, RotationAngle, update_angle_system},
+        ui::{EguiCtx, LastSize, UiState, ui_system},
     },
     renderer::{
         core::{WgpuDevice, WgpuQueue, WgpuRenderState},
         events::ResizeEvent,
         tonemapping_pass::{
-            resize_hdr_texture_system, setup_tonemapping_pass_system, FinalBlitCallback,
-            TonemappingBindGroup, TonemappingPass,
+            TonemappingBindGroup, TonemappingPass, resize_hdr_texture_system,
+            setup_tonemapping_pass_system,
         },
-        triangle_pass::{render_triangle_system, setup_triangle_pass_system},
+        triangle_pass::{
+            clear_hdr_texture_system, render_triangle_system, setup_triangle_pass_system,
+        },
     },
 };
 
@@ -36,7 +35,6 @@ pub struct InitialSize(pub wgpu::Extent3d);
 pub struct Custom3d {
     pub world: World,
     schedule: Schedule,
-    last_size: egui::Vec2,
 }
 
 impl Custom3d {
@@ -59,7 +57,8 @@ impl Custom3d {
         }));
 
         let mut startup_schedule = Schedule::new(Startup);
-        startup_schedule.add_systems((setup_triangle_pass_system, setup_tonemapping_pass_system).chain());
+        startup_schedule
+            .add_systems((setup_triangle_pass_system, setup_tonemapping_pass_system).chain());
         startup_schedule.run(&mut world);
         world.remove_resource::<InitialSize>();
 
@@ -74,82 +73,35 @@ impl Custom3d {
             .callback_resources
             .insert(world.remove_resource::<TonemappingBindGroup>().unwrap());
 
-        let last_size = egui::vec2(
-            initial_size_pixels[0] as f32,
-            initial_size_pixels[1] as f32,
-        );
-
         world.init_resource::<FrameRate>();
         world.init_resource::<RotationAngle>();
         world.init_resource::<DragDelta>();
         world.init_resource::<Counter>();
+        world.init_resource::<UiState>();
+        world.init_resource::<LastSize>();
+        world.insert_resource(EguiCtx(cc.egui_ctx.clone()));
 
         let mut schedule = Schedule::default();
-        schedule.add_systems((
-            update_angle_system,
-            increment_counter_system,
-            frame_rate_system,
-            render_triangle_system,
-            resize_hdr_texture_system,
-        ));
+        schedule.add_systems(
+            (
+                ui_system,
+                update_angle_system,
+                increment_counter_system,
+                frame_rate_system,
+                clear_hdr_texture_system,
+                render_triangle_system.run_if(|ui_state: Res<UiState>| ui_state.render_triangle),
+                resize_hdr_texture_system,
+            )
+                .chain(),
+        );
 
-        Some(Self {
-            world,
-            schedule,
-            last_size,
-        })
+        Some(Self { world, schedule })
     }
 }
 
 impl eframe::App for Custom3d {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let new_size = ctx.screen_rect().size() * ctx.pixels_per_point();
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let rect = ui.max_rect();
-            if self.last_size != new_size {
-                self.last_size = new_size;
-                self.world.send_event(ResizeEvent(wgpu::Extent3d {
-                    width: new_size.x.round() as u32,
-                    height: new_size.y.round() as u32,
-                    depth_or_array_layers: 1,
-                }));
-            }
-
-            let response = ui.interact(rect, ui.id().with("3d_view"), egui::Sense::drag());
-
-            self.world
-                .insert_resource(DragDelta(response.drag_delta()));
-            self.schedule.run(&mut self.world);
-
-            let callback = Callback::new_paint_callback(rect, FinalBlitCallback {});
-            ui.painter().add(callback);
-        });
-
-        egui::Window::new("Overlay").show(ctx, |ui| {
-            ui.label("You can put any egui widget here.");
-            if ui.button("A button").clicked() {
-                // take some action
-            }
-            let mut angle = self.world.resource_mut::<RotationAngle>();
-            ui.add(egui::Slider::new(&mut angle.0, 0.0..=360.0).text("Angle"));
-            
-            ui.horizontal(|ui| {
-                let counter = self.world.resource::<Counter>();
-                ui.label(format!("Counter: {}", counter.0));
-                let frame_rate = self.world.resource::<FrameRate>();
-                ui.label(format!("FPS: {:.1}", frame_rate.fps));
-            });
-
-            ui.separator();
-
-            let mut config = self.world.resource_mut::<Config>();
-            if ui.checkbox(&mut config.vsync, "V-Sync").changed() {
-                config.save();
-            }
-            ui.label("(Requires restart)");
-        });
-
+        self.schedule.run(&mut self.world);
         ctx.request_repaint();
     }
 }

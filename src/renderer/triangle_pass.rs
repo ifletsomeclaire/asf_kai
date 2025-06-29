@@ -2,7 +2,7 @@ use bevy_ecs::prelude::*;
 use std::num::NonZeroU64;
 use wgpu::util::DeviceExt;
 
-use super::core::{WgpuDevice, WgpuQueue, HDR_FORMAT};
+use super::core::{HDR_FORMAT, WgpuDevice, WgpuQueue};
 use crate::ecs::rotation::RotationAngle;
 
 #[derive(Resource)]
@@ -12,10 +12,37 @@ pub struct TriangleRenderResources {
     pub uniform_buffer: wgpu::Buffer,
 }
 
-pub fn setup_triangle_pass_system(
-    mut commands: Commands,
-    device_res: Res<WgpuDevice>,
+pub fn clear_hdr_texture_system(
+    device: Res<WgpuDevice>,
+    queue: Res<WgpuQueue>,
+    hdr_texture: Res<super::tonemapping_pass::HdrTexture>,
 ) {
+    let device = &device.0;
+    let queue = &queue.0;
+
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("clear_hdr_encoder"),
+    });
+
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("clear_hdr_pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: &hdr_texture.view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        occlusion_query_set: None,
+        timestamp_writes: None,
+    });
+
+    queue.submit(Some(encoder.finish()));
+}
+
+pub fn setup_triangle_pass_system(mut commands: Commands, device_res: Res<WgpuDevice>) {
     let device = &device_res.0;
     let triangle_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("custom3d"),
@@ -37,12 +64,11 @@ pub fn setup_triangle_pass_system(
             }],
         });
 
-    let triangle_pipeline_layout =
-        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("custom3d"),
-            bind_group_layouts: &[&triangle_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+    let triangle_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("custom3d"),
+        bind_group_layouts: &[&triangle_bind_group_layout],
+        push_constant_ranges: &[],
+    });
 
     let triangle_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("custom3d"),
@@ -115,7 +141,7 @@ pub fn render_triangle_system(
                 view: &hdr_texture.view,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
                 },
             })],

@@ -1,17 +1,15 @@
 use bevy_ecs::{event::EventReader, prelude::*};
-use eframe::egui_wgpu::{self, wgpu, CallbackTrait};
+use eframe::egui_wgpu::{self, CallbackTrait, wgpu};
 use std::sync::Arc;
 
 use super::{
-    core::{WgpuDevice, WgpuQueue, WgpuRenderState, HDR_FORMAT},
+    core::{HDR_FORMAT, WgpuDevice, WgpuRenderState},
     events::ResizeEvent,
 };
 
 #[derive(Resource)]
 pub struct HdrTexture {
-    pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
-    pub sampler: wgpu::Sampler,
 }
 
 #[derive(Resource, Clone)]
@@ -114,9 +112,7 @@ pub fn resize_hdr_texture_system(
 
         // Insert new texture resource
         commands.insert_resource(HdrTexture {
-            texture: hdr_texture,
             view: hdr_view,
-            sampler: hdr_sampler,
         });
     }
 }
@@ -177,12 +173,11 @@ pub fn setup_tonemapping_pass_system(
             ],
         });
 
-    let tonemap_pipeline_layout =
-        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("tonemapping"),
-            bind_group_layouts: &[&tonemap_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+    let tonemap_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("tonemapping"),
+        bind_group_layouts: &[&tonemap_bind_group_layout],
+        push_constant_ranges: &[],
+    });
 
     let tonemap_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("tonemapping"),
@@ -228,8 +223,6 @@ pub fn setup_tonemapping_pass_system(
     commands.insert_resource(TonemappingBindGroup(tonemap_bind_group));
 
     commands.insert_resource(HdrTexture {
-        texture: hdr_texture,
         view: hdr_view,
-        sampler: hdr_sampler,
     });
 }

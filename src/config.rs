@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Resource, Serialize, Deserialize)]
+#[derive(Resource, Serialize, Deserialize, Default)]
 pub struct Config {
     pub vsync: bool,
 }
@@ -21,18 +21,18 @@ impl Config {
         if let Some(path) = Self::config_path() {
             if let Some(parent) = path.parent() {
                 if let Err(e) = fs::create_dir_all(parent) {
-                    eprintln!("Failed to create config directory: {}", e);
+                    eprintln!("Failed to create config directory: {e}");
                     return;
                 }
             }
             match ron::to_string(self) {
                 Ok(ron_string) => {
                     if let Err(e) = fs::write(path, ron_string) {
-                        eprintln!("Failed to write config file: {}", e);
+                        eprintln!("Failed to write config file: {e}");
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to serialize config: {}", e);
+                    eprintln!("Failed to serialize config: {e}");
                 }
             }
         }
@@ -47,11 +47,5 @@ impl Config {
             }
         }
         Self::default()
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self { vsync: false }
     }
 }

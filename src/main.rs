@@ -34,4 +34,3 @@ fn main() -> eframe::Result<()> {
         Box::new(|cc| Ok(Box::new(app::Custom3d::new(cc).unwrap()))),
     )
 }
-
