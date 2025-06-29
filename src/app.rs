@@ -4,7 +4,10 @@ use eframe::{
     egui_wgpu::Callback,
 };
 use std::sync::Arc;
-use bevy_ecs::schedule::{ScheduleLabel};
+use bevy_ecs::{
+    event::Events,
+    schedule::{ScheduleLabel},
+};
 
 use crate::{
     config::Config,
@@ -15,7 +18,11 @@ use crate::{
     },
     renderer::{
         core::{WgpuDevice, WgpuQueue, WgpuRenderState},
-        tonemapping_pass::{setup_tonemapping_pass_system, FinalBlitCallback, TonemappingResources},
+        events::ResizeEvent,
+        tonemapping_pass::{
+            resize_hdr_texture_system, setup_tonemapping_pass_system, FinalBlitCallback,
+            TonemappingBindGroup, TonemappingPass,
+        },
         triangle_pass::{render_triangle_system, setup_triangle_pass_system},
     },
 };
@@ -23,9 +30,13 @@ use crate::{
 #[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
 struct Startup;
 
+#[derive(Resource)]
+pub struct InitialSize(pub wgpu::Extent3d);
+
 pub struct Custom3d {
     pub world: World,
     schedule: Schedule,
+    last_size: egui::Vec2,
 }
 
 impl Custom3d {
@@ -38,16 +49,35 @@ impl Custom3d {
         world.insert_resource(WgpuQueue(Arc::new(wgpu_render_state.queue.clone())));
         world.insert_resource(WgpuRenderState(wgpu_render_state.clone()));
         world.insert_resource(config);
+        world.init_resource::<Events<ResizeEvent>>();
+
+        let initial_size_pixels = [1280, 720]; // Default value
+        world.insert_resource(InitialSize(wgpu::Extent3d {
+            width: initial_size_pixels[0],
+            height: initial_size_pixels[1],
+            depth_or_array_layers: 1,
+        }));
 
         let mut startup_schedule = Schedule::new(Startup);
         startup_schedule.add_systems((setup_triangle_pass_system, setup_tonemapping_pass_system).chain());
         startup_schedule.run(&mut world);
+        world.remove_resource::<InitialSize>();
 
         wgpu_render_state
             .renderer
             .write()
             .callback_resources
-            .insert(world.remove_resource::<TonemappingResources>().unwrap());
+            .insert(world.resource::<TonemappingPass>().clone());
+        wgpu_render_state
+            .renderer
+            .write()
+            .callback_resources
+            .insert(world.remove_resource::<TonemappingBindGroup>().unwrap());
+
+        let last_size = egui::vec2(
+            initial_size_pixels[0] as f32,
+            initial_size_pixels[1] as f32,
+        );
 
         world.init_resource::<FrameRate>();
         world.init_resource::<RotationAngle>();
@@ -60,16 +90,32 @@ impl Custom3d {
             increment_counter_system,
             frame_rate_system,
             render_triangle_system,
+            resize_hdr_texture_system,
         ));
 
-        Some(Self { world, schedule })
+        Some(Self {
+            world,
+            schedule,
+            last_size,
+        })
     }
 }
 
 impl eframe::App for Custom3d {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let new_size = ctx.screen_rect().size() * ctx.pixels_per_point();
+
         egui::CentralPanel::default().show(ctx, |ui| {
             let rect = ui.max_rect();
+            if self.last_size != new_size {
+                self.last_size = new_size;
+                self.world.send_event(ResizeEvent(wgpu::Extent3d {
+                    width: new_size.x.round() as u32,
+                    height: new_size.y.round() as u32,
+                    depth_or_array_layers: 1,
+                }));
+            }
+
             let response = ui.interact(rect, ui.id().with("3d_view"), egui::Sense::drag());
 
             self.world
