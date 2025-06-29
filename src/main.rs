@@ -1,9 +1,8 @@
 mod app;
 mod config;
 mod ecs;
-mod render;
+mod renderer;
 
-use app::Custom3d;
 use config::Config;
 
 fn main() -> eframe::Result<()> {
@@ -30,12 +29,9 @@ fn main() -> eframe::Result<()> {
     };
 
     eframe::run_native(
-        "eframe custom 3D",
+        "My egui App",
         native_options,
-        Box::new(|cc| {
-            let mut custom_3d = Custom3d::new(cc).expect("Failed to create wgpu context");
-            custom_3d.world.insert_resource(config);
-            Ok(Box::new(custom_3d))
-        }),
+        Box::new(|cc| Ok(Box::new(app::Custom3d::new(cc).unwrap()))),
     )
 }
+
