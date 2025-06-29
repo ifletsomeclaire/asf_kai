@@ -8,4 +8,9 @@ eframe = { git = "https://github.com/emilk/egui", default-features = false, feat
 egui = { git = "https://github.com/emilk/egui"  }
 wgpu = "25.0.2"
 bytemuck = "1.16.1"
+bevy_ecs = "0.16.1"
+bevy_derive = "0.16.1"
+serde = { version = "1.0.219", features = ["derive"] }
+ron = "0.10.1"
+directories = "6.0.0"
 
