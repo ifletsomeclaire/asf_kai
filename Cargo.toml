@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 eframe = { git = "https://github.com/emilk/egui", default-features = false, features = ["wgpu"] }
+egui = { git = "https://github.com/emilk/egui"  }
 wgpu = "25.0.2"
 bytemuck = "1.16.1"
 

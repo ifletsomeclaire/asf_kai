@@ -104,6 +104,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "eframe",
+ "egui",
  "wgpu",
 ]
 
@@ -552,11 +553,17 @@ dependencies = [
  "bytemuck",
  "ecolor",
  "emath",
+ "epaint_default_fonts",
  "log",
  "nohash-hasher",
  "parking_lot",
  "profiling",
 ]
+
+[[package]]
+name = "epaint_default_fonts"
+version = "0.31.1"
+source = "git+https://github.com/emilk/egui#ab9f55ab0144462c1bc46a1fc49fe3b18f4d0fa7"
 
 [[package]]
 name = "equivalent"
