@@ -1,0 +1,10 @@
+[package]
+name = "asf_kai"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eframe = { git = "https://github.com/emilk/egui", default-features = false, features = ["wgpu"] }
+wgpu = "25.0.2"
+bytemuck = "1.16.1"
+
