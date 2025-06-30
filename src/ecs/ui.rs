@@ -22,6 +22,7 @@ pub struct LastSize(pub egui::Vec2);
 #[derive(Resource, Default)]
 pub struct UiState {
     pub render_triangle: bool,
+    pub render_model: bool,
 }
 
 #[derive(SystemParam)]
@@ -77,6 +78,7 @@ pub fn ui_system(mut ui_params: UiSystemParams) {
         ui.separator();
 
         ui.checkbox(&mut ui_params.ui_state.render_triangle, "Render Triangle");
+        ui.checkbox(&mut ui_params.ui_state.render_model, "Render Model");
 
         if ui.checkbox(&mut ui_params.config.vsync, "V-Sync").changed() {
             ui_params.config.save();

@@ -8,14 +8,19 @@ use std::sync::Arc;
 use crate::{
     config::Config,
     ecs::{
+        camera::{camera_control_system, Camera, OrbitCamera},
         counter::{Counter, increment_counter_system},
         framerate::{FrameRate, frame_rate_system},
         input::{keyboard_input_system, Input},
+        model::load_model_system,
         rotation::{DragDelta, RotationAngle, update_angle_system},
         ui::{EguiCtx, LastSize, UiState, ui_system},
     },
     renderer::{
         core::{WgpuDevice, WgpuQueue, WgpuRenderState},
+        d3_pipeline::{
+            render_d3_pipeline_system, setup_d3_pipeline_system, update_camera_buffer_system,
+        },
         events::ResizeEvent,
         tonemapping_pass::{
             TonemappingBindGroup, TonemappingPass, resize_hdr_texture_system,
@@ -58,8 +63,14 @@ impl Custom3d {
         }));
 
         let mut startup_schedule = Schedule::new(Startup);
-        startup_schedule
-            .add_systems((setup_triangle_pass_system, setup_tonemapping_pass_system).chain());
+        startup_schedule.add_systems(
+            (
+                setup_triangle_pass_system,
+                setup_tonemapping_pass_system,
+                (setup_d3_pipeline_system, load_model_system).chain(),
+            )
+                .chain(),
+        );
         startup_schedule.run(&mut world);
         world.remove_resource::<InitialSize>();
 
@@ -80,6 +91,8 @@ impl Custom3d {
         world.init_resource::<Counter>();
         world.init_resource::<UiState>();
         world.init_resource::<LastSize>();
+        world.init_resource::<Camera>();
+        world.init_resource::<OrbitCamera>();
         world.insert_resource(EguiCtx(cc.egui_ctx.clone()));
 
         let mut schedule = Schedule::default();
@@ -90,16 +103,30 @@ impl Custom3d {
                 update_angle_system,
                 increment_counter_system,
                 frame_rate_system,
+                (
+                    camera_control_system,
+                    update_camera_buffer_system,
+                    resize_hdr_texture_system,
+                    update_camera_aspect_ratio_system,
+                )
+                    .chain(),
                 clear_hdr_texture_system,
-                resize_hdr_texture_system,
+                render_triangle_system.run_if(|ui_state: Res<UiState>| ui_state.render_triangle),
+                render_d3_pipeline_system.run_if(|ui_state: Res<UiState>| ui_state.render_model),
             )
                 .chain(),
         );
-        schedule.add_systems(
-            render_triangle_system.run_if(|ui_state: Res<UiState>| ui_state.render_triangle),
-        );
 
         Some(Self { world, schedule })
+    }
+}
+
+pub fn update_camera_aspect_ratio_system(
+    mut events: EventReader<ResizeEvent>,
+    mut camera: ResMut<Camera>,
+) {
+    for event in events.read() {
+        camera.aspect = event.0.width as f32 / event.0.height as f32;
     }
 }
 
