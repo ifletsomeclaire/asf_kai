@@ -1,12 +1,10 @@
 use crate::ecs::input::Input;
 use bevy_ecs::prelude::*;
-use glam::{Mat4, Vec3, Vec4, Vec4Swizzles};
+use glam::{Mat4, Quat, Vec3, Vec4, Vec4Swizzles};
+use bevy_transform::components::Transform;
 
-#[derive(Resource)]
+#[derive(Component)]
 pub struct Camera {
-    pub position: Vec3,
-    pub target: Vec3,
-    pub up: Vec3,
     pub aspect: f32,
     pub fovy: f32,
     pub znear: f32,
@@ -16,9 +14,6 @@ pub struct Camera {
 impl Default for Camera {
     fn default() -> Self {
         Self {
-            position: Vec3::new(0.0, 1.0, 5.0),
-            target: Vec3::ZERO,
-            up: Vec3::Y,
             aspect: 16.0 / 9.0,
             fovy: 45.0f32.to_radians(),
             znear: 0.1,
@@ -28,10 +23,8 @@ impl Default for Camera {
 }
 
 impl Camera {
-    pub fn build_view_projection_matrix(&self) -> Mat4 {
-        let view = Mat4::look_at_rh(self.position, self.target, self.up);
-        let proj = Mat4::perspective_rh(self.fovy, self.aspect, self.znear, self.zfar);
-        proj * view
+    pub fn projection_matrix(&self) -> Mat4 {
+        Mat4::perspective_rh(self.fovy, self.aspect, self.znear, self.zfar)
     }
 }
 
@@ -55,10 +48,17 @@ impl Default for OrbitCamera {
 }
 
 pub fn camera_control_system(
-    mut camera: ResMut<Camera>,
+    mut query: Query<&mut Transform, With<Camera>>,
     mut orbit_camera: ResMut<OrbitCamera>,
     input: Res<Input>,
 ) {
+    let mut transform = if let Ok(t) = query.get_single_mut() {
+        t
+    } else {
+        // No camera entity, so nothing to do.
+        return;
+    };
+
     if input.0.raw_scroll_delta.y != 0.0 {
         orbit_camera.distance -= input.0.raw_scroll_delta.y * orbit_camera.distance * 0.1;
         orbit_camera.distance = orbit_camera.distance.clamp(1.0, 10000.0);
@@ -74,6 +74,7 @@ pub fn camera_control_system(
             .clamp(-std::f32::consts::FRAC_PI_2 + 0.01, std::f32::consts::FRAC_PI_2 - 0.01);
     }
 
-    let rotation = Mat4::from_rotation_y(orbit_camera.yaw) * Mat4::from_rotation_x(orbit_camera.pitch);
-    camera.position = orbit_camera.target + (rotation * Vec4::new(0.0, 0.0, orbit_camera.distance, 1.0)).xyz();
+    let rotation = Quat::from_rotation_y(orbit_camera.yaw) * Quat::from_rotation_x(orbit_camera.pitch);
+    transform.translation = orbit_camera.target + rotation * (Vec3::Z * orbit_camera.distance);
+    transform.look_at(orbit_camera.target, Vec3::Y);
 } 

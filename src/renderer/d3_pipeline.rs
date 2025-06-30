@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::*;
 use std::num::NonZeroU64;
 use wgpu::util::DeviceExt;
+use bevy_transform::components::GlobalTransform;
 
 use super::core::{HDR_FORMAT, WgpuDevice, WgpuQueue};
 use crate::ecs::{
@@ -135,26 +136,31 @@ pub struct CameraBindGroup(pub wgpu::BindGroup);
 pub fn update_camera_buffer_system(
     mut commands: Commands,
     device: Res<WgpuDevice>,
-    camera: Res<Camera>,
+    query: Query<(&Camera, &GlobalTransform)>,
     pipeline: Res<D3Pipeline>,
 ) {
-    let view_proj = camera.build_view_projection_matrix();
-    let uniform_buffer = device.0.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("camera_uniform_buffer"),
-        contents: bytemuck::cast_slice(view_proj.as_ref()),
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-    });
+    if let Ok((camera, transform)) = query.get_single() {
+        let proj = camera.projection_matrix();
+        let view = transform.compute_matrix().inverse();
+        let view_proj = proj * view;
 
-    let bind_group = device.0.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("camera_bind_group"),
-        layout: &pipeline.camera_bind_group_layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: uniform_buffer.as_entire_binding(),
-        }],
-    });
+        let uniform_buffer = device.0.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("camera_uniform_buffer"),
+            contents: bytemuck::cast_slice(view_proj.as_ref()),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
 
-    commands.insert_resource(CameraBindGroup(bind_group));
+        let bind_group = device.0.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("camera_bind_group"),
+            layout: &pipeline.camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            }],
+        });
+
+        commands.insert_resource(CameraBindGroup(bind_group));
+    }
 }
 
 pub fn render_d3_pipeline_system(

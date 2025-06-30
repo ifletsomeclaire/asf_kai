@@ -9,6 +9,9 @@ use bevy_transform::TransformPlugin;
 use bevy_transform::systems::{
     mark_dirty_trees, propagate_parent_transforms, sync_simple_transforms,
 };
+use bevy_transform::{
+    components::{GlobalTransform, Transform},
+};
 
 use crate::{
     config::Config,
@@ -96,9 +99,14 @@ impl Custom3d {
         world.init_resource::<Counter>();
         world.init_resource::<UiState>();
         world.init_resource::<LastSize>();
-        world.init_resource::<Camera>();
         world.init_resource::<OrbitCamera>();
         world.insert_resource(EguiCtx(cc.egui_ctx.clone()));
+
+        world.spawn((
+            Camera::default(),
+            Transform::default(),
+            GlobalTransform::default(),
+        ));
 
         let mut schedule = Schedule::default();
         schedule.add_systems(
@@ -108,23 +116,37 @@ impl Custom3d {
                 update_angle_system,
                 increment_counter_system,
                 frame_rate_system,
-                (
-                    sync_simple_transforms,
-                    mark_dirty_trees,
-                    propagate_parent_transforms,
-                    camera_control_system,
-                    update_camera_buffer_system,
-                    prepare_scene_data_system,
-                    resize_hdr_texture_system,
-                    update_camera_aspect_ratio_system,
-                )
-                    .chain(),
-                clear_hdr_texture_system,
-                render_triangle_system.run_if(|ui_state: Res<UiState>| ui_state.render_triangle),
-                render_d3_pipeline_system.run_if(|ui_state: Res<UiState>| ui_state.render_model),
             )
                 .chain(),
         );
+        schedule.add_systems(
+            (
+                sync_simple_transforms,
+                mark_dirty_trees,
+                propagate_parent_transforms,
+            )
+                .chain(),
+        );
+        schedule.add_systems(
+            (
+                camera_control_system,
+                update_camera_buffer_system,
+                prepare_scene_data_system,
+            )
+                .chain(),
+        );
+        schedule.add_systems(
+            (
+                resize_hdr_texture_system,
+                update_camera_aspect_ratio_system,
+            )
+                .chain(),
+        );
+        schedule.add_systems((
+            clear_hdr_texture_system,
+            render_triangle_system.run_if(|ui_state: Res<UiState>| ui_state.render_triangle),
+            render_d3_pipeline_system.run_if(|ui_state: Res<UiState>| ui_state.render_model),
+        ));
 
         Some(Self { world, schedule })
     }
@@ -132,10 +154,12 @@ impl Custom3d {
 
 pub fn update_camera_aspect_ratio_system(
     mut events: EventReader<ResizeEvent>,
-    mut camera: ResMut<Camera>,
+    mut query: Query<&mut Camera>,
 ) {
-    for event in events.read() {
-        camera.aspect = event.0.width as f32 / event.0.height as f32;
+    if let Ok(mut camera) = query.get_single_mut() {
+        for event in events.read() {
+            camera.aspect = event.0.width as f32 / event.0.height as f32;
+        }
     }
 }
 
