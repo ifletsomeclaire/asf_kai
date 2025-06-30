@@ -5,7 +5,7 @@ use wgpu::util::DeviceExt;
 use super::core::{HDR_FORMAT, WgpuDevice, WgpuQueue};
 use crate::ecs::{
     camera::Camera,
-    model::SceneData,
+    model::PerFrameSceneData,
 };
 
 #[derive(Resource)]
@@ -73,6 +73,16 @@ pub fn setup_d3_pipeline_system(mut commands: Commands, device_res: Res<WgpuDevi
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
                     visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -152,7 +162,7 @@ pub fn render_d3_pipeline_system(
     _queue: Res<WgpuQueue>,
     pipeline: Res<D3Pipeline>,
     hdr_texture: Res<super::tonemapping_pass::HdrTexture>,
-    scene_data: Option<Res<SceneData>>,
+    scene_data: Option<Res<PerFrameSceneData>>,
     camera_bind_group: Option<Res<CameraBindGroup>>,
 ) {
     if scene_data.is_none() || camera_bind_group.is_none() {
@@ -184,7 +194,7 @@ pub fn render_d3_pipeline_system(
         render_pass.set_pipeline(&pipeline.pipeline);
         render_pass.set_bind_group(0, &camera_bind_group.0, &[]);
         render_pass.set_bind_group(1, &scene_data.mesh_bind_group, &[]);
-        render_pass.draw(0..scene_data.total_indices, 0..1);
+        render_pass.draw(0..scene_data.total_vertices_to_draw, 0..1);
     }
 
     _queue.0.submit(Some(encoder.finish()));

@@ -4,6 +4,11 @@ use eframe::{
     egui::{self},
 };
 use std::sync::Arc;
+use bevy_app::prelude::*;
+use bevy_transform::TransformPlugin;
+use bevy_transform::systems::{
+    mark_dirty_trees, propagate_parent_transforms, sync_simple_transforms,
+};
 
 use crate::{
     config::Config,
@@ -12,7 +17,7 @@ use crate::{
         counter::{Counter, increment_counter_system},
         framerate::{FrameRate, frame_rate_system},
         input::{keyboard_input_system, Input},
-        model::load_model_system,
+        model::{load_static_models_system, prepare_scene_data_system},
         rotation::{DragDelta, RotationAngle, update_angle_system},
         ui::{EguiCtx, LastSize, UiState, ui_system},
     },
@@ -67,7 +72,7 @@ impl Custom3d {
             (
                 setup_triangle_pass_system,
                 setup_tonemapping_pass_system,
-                (setup_d3_pipeline_system, load_model_system).chain(),
+                (setup_d3_pipeline_system, load_static_models_system).chain(),
             )
                 .chain(),
         );
@@ -104,8 +109,12 @@ impl Custom3d {
                 increment_counter_system,
                 frame_rate_system,
                 (
+                    sync_simple_transforms,
+                    mark_dirty_trees,
+                    propagate_parent_transforms,
                     camera_control_system,
                     update_camera_buffer_system,
+                    prepare_scene_data_system,
                     resize_hdr_texture_system,
                     update_camera_aspect_ratio_system,
                 )
