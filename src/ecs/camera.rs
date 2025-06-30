@@ -1,6 +1,6 @@
 use crate::ecs::input::Input;
 use bevy_ecs::prelude::*;
-use glam::{Mat4, Quat, Vec3, Vec4, Vec4Swizzles};
+use glam::{Mat4, Quat, Vec3};
 use bevy_transform::components::Transform;
 
 #[derive(Component)]
@@ -52,7 +52,7 @@ pub fn camera_control_system(
     mut orbit_camera: ResMut<OrbitCamera>,
     input: Res<Input>,
 ) {
-    let mut transform = if let Ok(t) = query.get_single_mut() {
+    let mut transform = if let Ok(t) = query.single_mut() {
         t
     } else {
         // No camera entity, so nothing to do.

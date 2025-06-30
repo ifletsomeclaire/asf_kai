@@ -6,9 +6,7 @@ use eframe::egui;
 use crate::{
     config::Config,
     ecs::{
-        counter::Counter,
         framerate::FrameRate,
-        rotation::{DragDelta, RotationAngle},
     },
     renderer::events::ResizeEvent,
 };
@@ -31,11 +29,8 @@ pub struct UiSystemParams<'w> {
     last_size: ResMut<'w, LastSize>,
     ui_state: ResMut<'w, UiState>,
     config: ResMut<'w, Config>,
-    angle: ResMut<'w, RotationAngle>,
-    counter: Res<'w, Counter>,
     frame_rate: Res<'w, FrameRate>,
     events: EventWriter<'w, ResizeEvent>,
-    drag_delta: ResMut<'w, DragDelta>,
 }
 
 pub fn ui_system(mut ui_params: UiSystemParams) {
@@ -53,8 +48,7 @@ pub fn ui_system(mut ui_params: UiSystemParams) {
             }));
         }
 
-        let response = ui.interact(rect, ui.id().with("3d_view"), egui::Sense::drag());
-        ui_params.drag_delta.0 = response.drag_delta();
+        ui.interact(rect, ui.id().with("3d_view"), egui::Sense::drag());
 
         let callback = eframe::egui_wgpu::Callback::new_paint_callback(
             rect,
@@ -68,12 +62,8 @@ pub fn ui_system(mut ui_params: UiSystemParams) {
         if ui.button("A button").clicked() {
             // take some action
         }
-        ui.add(egui::Slider::new(&mut ui_params.angle.0, 0.0..=360.0).text("Angle"));
 
-        ui.horizontal(|ui| {
-            ui.label(format!("Counter: {}", ui_params.counter.0));
-            ui.label(format!("FPS: {:.1}", ui_params.frame_rate.fps));
-        });
+        ui.label(format!("FPS: {:.1}", ui_params.frame_rate.fps));
 
         ui.separator();
 

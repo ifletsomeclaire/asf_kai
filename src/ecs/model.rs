@@ -1,10 +1,7 @@
 use bevy_ecs::prelude::*;
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec3};
-use russimp::{
-    node::Node,
-    scene::{PostProcess, Scene},
-};
+use glam::Vec3;
+use russimp::scene::{PostProcess, Scene};
 use std::collections::HashMap;
 use wgpu::util::DeviceExt;
 use bevy_transform::components::{GlobalTransform, Transform};
@@ -21,7 +18,7 @@ pub struct Vertex {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
-struct MeshDescription {
+pub struct MeshDescription {
     index_count: u32,
     first_index: u32,
     base_vertex: i32,
@@ -55,7 +52,6 @@ pub struct StaticModelData {
     pub mesh_description_buffer: wgpu::Buffer,
     pub mesh_descriptions: Vec<MeshDescription>, // We need this to calculate instance lookups
     pub mesh_id_remap: HashMap<u32, u32>,
-    pub total_unique_meshes: usize,
 }
 
 #[derive(Resource)]
@@ -82,7 +78,7 @@ pub fn load_static_models_system(mut commands: Commands, device: Res<WgpuDevice>
 
     // We no longer create instances here. We just gather mesh data.
     for (mesh_id, mesh) in scene.meshes.iter().enumerate() {
-        if unique_meshes.get(&mesh_id).is_none() {
+        if !unique_meshes.contains_key(&mesh_id) {
             log::info!(
                 "Loading new unique mesh: {} ({} vertices, {} faces)",
                 mesh.name,
@@ -156,7 +152,6 @@ pub fn load_static_models_system(mut commands: Commands, device: Res<WgpuDevice>
         mesh_description_buffer,
         mesh_descriptions,
         mesh_id_remap,
-        total_unique_meshes: unique_meshes.len(),
     });
 
     // --- 5. Spawn entities that will be rendered ---

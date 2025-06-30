@@ -139,7 +139,7 @@ pub fn update_camera_buffer_system(
     query: Query<(&Camera, &GlobalTransform)>,
     pipeline: Res<D3Pipeline>,
 ) {
-    if let Ok((camera, transform)) = query.get_single() {
+    if let Ok((camera, transform)) = query.single() {
         let proj = camera.projection_matrix();
         let view = transform.compute_matrix().inverse();
         let view_proj = proj * view;

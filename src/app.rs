@@ -4,24 +4,18 @@ use eframe::{
     egui::{self},
 };
 use std::sync::Arc;
-use bevy_app::prelude::*;
-use bevy_transform::TransformPlugin;
-use bevy_transform::systems::{
-    mark_dirty_trees, propagate_parent_transforms, sync_simple_transforms,
-};
 use bevy_transform::{
     components::{GlobalTransform, Transform},
+    systems::{mark_dirty_trees, propagate_parent_transforms, sync_simple_transforms},
 };
 
 use crate::{
     config::Config,
     ecs::{
         camera::{camera_control_system, Camera, OrbitCamera},
-        counter::{Counter, increment_counter_system},
         framerate::{FrameRate, frame_rate_system},
         input::{keyboard_input_system, Input},
         model::{load_static_models_system, prepare_scene_data_system},
-        rotation::{DragDelta, RotationAngle, update_angle_system},
         ui::{EguiCtx, LastSize, UiState, ui_system},
     },
     renderer::{
@@ -94,9 +88,6 @@ impl Custom3d {
             .insert(world.remove_resource::<TonemappingBindGroup>().unwrap());
 
         world.init_resource::<FrameRate>();
-        world.init_resource::<RotationAngle>();
-        world.init_resource::<DragDelta>();
-        world.init_resource::<Counter>();
         world.init_resource::<UiState>();
         world.init_resource::<LastSize>();
         world.init_resource::<OrbitCamera>();
@@ -113,8 +104,6 @@ impl Custom3d {
             (
                 keyboard_input_system,
                 ui_system,
-                update_angle_system,
-                increment_counter_system,
                 frame_rate_system,
             )
                 .chain(),
@@ -142,11 +131,14 @@ impl Custom3d {
             )
                 .chain(),
         );
-        schedule.add_systems((
-            clear_hdr_texture_system,
-            render_triangle_system.run_if(|ui_state: Res<UiState>| ui_state.render_triangle),
-            render_d3_pipeline_system.run_if(|ui_state: Res<UiState>| ui_state.render_model),
-        ));
+        schedule.add_systems(
+            (
+                clear_hdr_texture_system,
+                render_triangle_system.run_if(|ui_state: Res<UiState>| ui_state.render_triangle),
+                render_d3_pipeline_system.run_if(|ui_state: Res<UiState>| ui_state.render_model),
+            )
+                .chain(),
+        );
 
         Some(Self { world, schedule })
     }
@@ -156,7 +148,7 @@ pub fn update_camera_aspect_ratio_system(
     mut events: EventReader<ResizeEvent>,
     mut query: Query<&mut Camera>,
 ) {
-    if let Ok(mut camera) = query.get_single_mut() {
+    if let Ok(mut camera) = query.single_mut() {
         for event in events.read() {
             camera.aspect = event.0.width as f32 / event.0.height as f32;
         }

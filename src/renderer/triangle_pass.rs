@@ -3,7 +3,6 @@ use std::num::NonZeroU64;
 use wgpu::util::DeviceExt;
 
 use super::core::{HDR_FORMAT, WgpuDevice, WgpuQueue};
-use crate::ecs::rotation::RotationAngle;
 
 #[derive(Resource)]
 pub struct TriangleRenderResources {
@@ -119,7 +118,6 @@ pub fn render_triangle_system(
     queue: Res<WgpuQueue>,
     triangle_resources: Res<TriangleRenderResources>,
     hdr_texture: Res<super::tonemapping_pass::HdrTexture>,
-    rotation: Res<RotationAngle>,
 ) {
     let device = &device.0;
     let queue = &queue.0;
@@ -127,7 +125,7 @@ pub fn render_triangle_system(
     queue.write_buffer(
         &triangle_resources.uniform_buffer,
         0,
-        bytemuck::cast_slice(&[rotation.0]),
+        bytemuck::cast_slice(&[0.0_f32]),
     );
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
