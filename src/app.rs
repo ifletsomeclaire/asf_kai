@@ -10,6 +10,7 @@ use crate::{
     ecs::{
         counter::{Counter, increment_counter_system},
         framerate::{FrameRate, frame_rate_system},
+        input::{keyboard_input_system, Input},
         rotation::{DragDelta, RotationAngle, update_angle_system},
         ui::{EguiCtx, LastSize, UiState, ui_system},
     },
@@ -84,15 +85,18 @@ impl Custom3d {
         let mut schedule = Schedule::default();
         schedule.add_systems(
             (
+                keyboard_input_system,
                 ui_system,
                 update_angle_system,
                 increment_counter_system,
                 frame_rate_system,
                 clear_hdr_texture_system,
-                render_triangle_system.run_if(|ui_state: Res<UiState>| ui_state.render_triangle),
                 resize_hdr_texture_system,
             )
                 .chain(),
+        );
+        schedule.add_systems(
+            render_triangle_system.run_if(|ui_state: Res<UiState>| ui_state.render_triangle),
         );
 
         Some(Self { world, schedule })
@@ -101,6 +105,7 @@ impl Custom3d {
 
 impl eframe::App for Custom3d {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.world.insert_resource(Input(ctx.input(|i| i.clone())));
         self.schedule.run(&mut self.world);
         ctx.request_repaint();
     }

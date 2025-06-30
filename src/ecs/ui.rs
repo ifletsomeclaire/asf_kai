@@ -1,3 +1,4 @@
+use bevy_derive::Deref;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParam;
 use eframe::egui;
@@ -12,7 +13,7 @@ use crate::{
     renderer::events::ResizeEvent,
 };
 
-#[derive(Resource)]
+#[derive(Resource, Deref)]
 pub struct EguiCtx(pub egui::Context);
 
 #[derive(Resource, Default)]
@@ -37,7 +38,7 @@ pub struct UiSystemParams<'w> {
 }
 
 pub fn ui_system(mut ui_params: UiSystemParams) {
-    let ctx = &ui_params.egui_ctx.0;
+    let ctx = &ui_params.egui_ctx;
     let new_size = ctx.screen_rect().size() * ctx.pixels_per_point();
 
     egui::CentralPanel::default().show(ctx, |ui| {

@@ -10,20 +10,6 @@ fn main() -> eframe::Result<()> {
 
     let native_options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
-        // wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
-        //     present_mode: if config.vsync {
-        //         eframe::wgpu::PresentMode::AutoNoVsync
-        //     } else {
-        //         eframe::wgpu::PresentMode::AutoVsync
-        //     },
-        //     wgpu_setup:eframe::egui_wgpu::WgpuSetup::CreateNew(WgpuSetupCreateNew {
-        //         instance_descriptor: todo!(),
-        //         power_preference: todo!(),
-        //         native_adapter_selector: todo!(),
-        //         device_descriptor: todo!(),
-        //     })
-        //     ..Default::default()
-        // },
         vsync: config.vsync,
         ..Default::default()
     };
