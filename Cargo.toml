@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "asf_kai",
+    "core",
     "database",
     "types",
 ]

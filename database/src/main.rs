@@ -1,3 +1,107 @@
-fn main() {
-    println!("Hello, world!");
+use std::path::Path;
+
+use log::{info, warn};
+use redb::{Database, Error, TableDefinition};
+use russimp::scene::{PostProcess, Scene};
+use types::{Mesh, Model};
+use walkdir::WalkDir;
+
+const MODEL_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("models");
+
+pub struct ModelDatabase {
+    db: Database,
+}
+
+impl ModelDatabase {
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
+        let db = Database::create(path)?;
+        Ok(Self { db })
+    }
+
+    pub fn populate_from_assets<P: AsRef<Path>>(&self, assets_dir: P) -> Result<(), anyhow::Error> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(MODEL_TABLE)?;
+            for entry in WalkDir::new(assets_dir)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
+                let path = entry.path();
+                let extension = path.extension().and_then(|s| s.to_str());
+
+                if !matches!(extension, Some("gltf") | Some("glb")) {
+                    continue;
+                }
+
+                let model_name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("unknown_model");
+
+                info!("Processing model: {}", model_name);
+
+                let scene = Scene::from_file(
+                    path.to_str().unwrap(),
+                    vec![
+                        PostProcess::Triangulate,
+                        PostProcess::JoinIdenticalVertices,
+                    ],
+                )?;
+
+                let meshes = scene
+                    .meshes
+                    .into_iter()
+                    .map(|mesh| {
+                        let vertices = mesh
+                            .vertices
+                            .into_iter()
+                            .map(|v| glam::vec3(v.x, v.y, v.z))
+                            .collect();
+                        let indices = mesh.faces.into_iter().flat_map(|f| f.0).collect();
+                        Mesh { vertices, indices }
+                    })
+                    .collect();
+
+                let model = Model {
+                    name: model_name.to_string(),
+                    meshes,
+                };
+
+                let encoded = bincode::serialize(&model)?;
+                table.insert(model_name, encoded.as_slice())?;
+            }
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    pub fn get_model(&self, name: &str) -> Result<Option<Model>, anyhow::Error> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(MODEL_TABLE)?;
+        match table.get(name)? {
+            Some(guard) => {
+                let bytes = guard.value();
+                let model: Model = bincode::deserialize(bytes)?;
+                Ok(Some(model))
+            }
+            None => Ok(None),
+        }
+    }
+}
+
+fn main() -> Result<(), anyhow::Error> {
+    env_logger::init();
+    info!("Starting database populator");
+    let db = ModelDatabase::new("assets/models.redb")?;
+    db.populate_from_assets("assets/models")?;
+    info!("Database populated successfully");
+
+    // Example of retrieving a model
+    if let Some(model) = db.get_model("cube")? {
+        info!("Successfully retrieved model 'cube' with {} meshes", model.meshes.len());
+    } else {
+        warn!("Could not retrieve model 'cube'");
+    }
+
+    Ok(())
 }

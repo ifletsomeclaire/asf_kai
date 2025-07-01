@@ -1,19 +1,19 @@
 use bevy_ecs::prelude::*;
 use bytemuck::{Pod, Zeroable};
-use glam::Vec3;
-use russimp::scene::{PostProcess, Scene};
-use std::collections::{HashMap, HashSet};
+use redb::{Database, TableDefinition};
+use std::collections::HashMap;
+use types::Model as TypesModel;
 use wgpu::util::DeviceExt;
-use bevy_transform::components::{GlobalTransform, Transform};
+use bevy_transform::components::GlobalTransform;
 
 use crate::renderer::{core::WgpuDevice, d3_pipeline::D3Pipeline};
+
+const MODEL_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("models");
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct Vertex {
     pub position: [f32; 4],
-    // pub normal: [f32; 3],
-    // pub uv: [f32; 2],
 }
 
 #[repr(C)]
@@ -42,7 +42,7 @@ struct InstanceLookup {
 
 #[derive(Component, Clone, Copy)]
 pub struct Model {
-    pub mesh_id: u32, // The *original* mesh_id from the file
+    pub mesh_id: u32,
 }
 
 pub struct ModelInfo {
@@ -60,8 +60,8 @@ pub struct StaticModelData {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub mesh_description_buffer: wgpu::Buffer,
-    pub mesh_descriptions: Vec<MeshDescription>, // We need this to calculate instance lookups
-    pub mesh_id_remap: HashMap<u32, u32>,
+    pub mesh_descriptions: Vec<MeshDescription>,
+    pub mesh_id_remap: HashMap<String, u32>,
 }
 
 #[derive(Resource)]
@@ -70,63 +70,31 @@ pub struct PerFrameSceneData {
     pub total_vertices_to_draw: u32,
 }
 
-pub fn load_static_models_system(mut commands: Commands, device: Res<WgpuDevice>) {
-    let model_files = vec!["assets/models/cube.gltf", "assets/models/PalmTree.gltf"];
+pub fn load_models_from_db_system(
+    mut commands: Commands,
+    device: Res<WgpuDevice>,
+) -> Result<(), anyhow::Error> {
     let mut all_vertices: Vec<Vertex> = Vec::new();
     let mut all_indices: Vec<u32> = Vec::new();
-    let mut unique_meshes: HashMap<u32, (u32, u32, i32)> = HashMap::new(); // mesh_id -> (index_count, first_index, base_vertex)
-
+    let mut mesh_descriptions = Vec::new();
+    let mut mesh_id_remap: HashMap<String, u32> = HashMap::new();
     let mut available_models = AvailableModels::default();
 
-    for (model_id, model_file) in model_files.iter().enumerate() {
-        log::info!("Loading model: {}", model_file);
-        let scene = Scene::from_file(
-            model_file,
-            vec![
-                PostProcess::Triangulate,
-                PostProcess::JoinIdenticalVertices,
-            ],
-        )
-        .unwrap();
+    let db = Database::open("assets/models.redb")?;
+    let read_txn = db.begin_read()?;
+    let table = read_txn.open_table(MODEL_TABLE)?;
 
-        for (mesh_id, mesh) in scene.meshes.iter().enumerate() {
-            let mesh_id = mesh_id as u32;
+    log::info!("Loading models from database...");
+    let mut count = 0;
+    for result in table.range::<&str>(..)? {
+        count += 1;
+        let (key, value) = result?;
+        let model_name = key.value().to_string();
+        log::info!("  - Loading model: {}", model_name);
+        let model_data = value.value();
+        let model: TypesModel = bincode::deserialize(model_data)?;
 
-            let model_name = model_file
-                .split('/')
-                .last()
-                .unwrap()
-                .split('.')
-                .next()
-                .unwrap();
-            
-            let model_info_name = if scene.meshes.len() > 1 {
-                format!("{}-{}", model_name, mesh_id)
-            } else {
-                model_name.to_string()
-            };
-
-            available_models.models.push(ModelInfo {
-                name: model_info_name,
-                mesh_id,
-            });
-
-            if unique_meshes.contains_key(&mesh_id) {
-                log::warn!(
-                    "Mesh with id {} from file {} already loaded. Skipping.",
-                    mesh_id,
-                    model_file
-                );
-                continue;
-            }
-
-            log::info!(
-                "Loading new unique mesh: {} ({} vertices, {} faces)",
-                mesh.name,
-                mesh.vertices.len(),
-                mesh.faces.len()
-            );
-
+        for (mesh_index, mesh) in model.meshes.iter().enumerate() {
             let base_vertex = all_vertices.len() as i32;
             let first_index = all_indices.len() as u32;
 
@@ -138,36 +106,34 @@ pub fn load_static_models_system(mut commands: Commands, device: Res<WgpuDevice>
                 })
                 .collect();
 
-            let indices: Vec<u32> = mesh.faces.iter().flat_map(|f| f.0.clone()).collect();
-            let index_count = indices.len() as u32;
+            let index_count = mesh.indices.len() as u32;
 
             all_vertices.extend(vertices);
-            all_indices.extend(indices);
-            unique_meshes.insert(mesh_id, (index_count, first_index, base_vertex));
+            all_indices.extend(mesh.indices.clone());
+
+            let new_mesh_id = mesh_descriptions.len() as u32;
+            let unique_model_name = if model.meshes.len() > 1 {
+                format!("{}-{}", model_name, mesh_index)
+            } else {
+                model_name.clone()
+            };
+
+            mesh_id_remap.insert(unique_model_name.clone(), new_mesh_id);
+            available_models.models.push(ModelInfo {
+                name: unique_model_name,
+                mesh_id: new_mesh_id,
+            });
+
+            mesh_descriptions.push(MeshDescription {
+                index_count,
+                first_index,
+                base_vertex,
+                _padding: 0,
+            });
         }
     }
+    log::info!("Finished loading {} models.", count);
 
-    // --- 2. Create MeshDescription Vec from Unique Meshes ---
-    let mut mesh_id_remap: HashMap<u32, u32> = HashMap::new();
-    let mut mesh_descriptions = Vec::new();
-    // Sort by original_mesh_id to have a deterministic order
-    let mut sorted_unique_meshes: Vec<_> = unique_meshes.iter().collect();
-    sorted_unique_meshes.sort_by_key(|(k, _)| **k);
-
-    for (original_mesh_id, (index_count, first_index, base_vertex)) in sorted_unique_meshes {
-        let new_id = mesh_descriptions.len() as u32;
-        mesh_id_remap.insert(*original_mesh_id as u32, new_id);
-        mesh_descriptions.push(MeshDescription {
-            index_count: *index_count,
-            first_index: *first_index,
-            base_vertex: *base_vertex,
-            _padding: 0,
-        });
-    }
-
-    log::info!("Total unique meshes loaded: {}", mesh_descriptions.len());
-
-    // --- 3. Create GPU Buffers for static data ---
     let vertex_buffer = device.0.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Global Vertex Buffer"),
         contents: bytemuck::cast_slice(&all_vertices),
@@ -186,7 +152,6 @@ pub fn load_static_models_system(mut commands: Commands, device: Res<WgpuDevice>
         usage: wgpu::BufferUsages::STORAGE,
     });
 
-    // --- 4. Store static data in a resource ---
     commands.insert_resource(StaticModelData {
         vertex_buffer,
         index_buffer,
@@ -196,6 +161,8 @@ pub fn load_static_models_system(mut commands: Commands, device: Res<WgpuDevice>
     });
 
     commands.insert_resource(available_models);
+
+    Ok(())
 }
 
 pub fn prepare_scene_data_system(
@@ -203,31 +170,29 @@ pub fn prepare_scene_data_system(
     device: Res<WgpuDevice>,
     pipeline: Res<D3Pipeline>,
     static_model_data: Res<StaticModelData>,
+    available_models: Res<AvailableModels>,
     query: Query<(&Model, &GlobalTransform)>,
 ) {
     let instances: Vec<Instance> = query
         .iter()
-        .map(|(model, transform)| {
-            let remapped_mesh_id = static_model_data
+        .filter_map(|(model, transform)| {
+            let model_info = available_models.models.get(model.mesh_id as usize)?;
+            static_model_data
                 .mesh_id_remap
-                .get(&model.mesh_id)
-                .unwrap();
-            Instance {
-                model_matrix: transform.compute_matrix().to_cols_array_2d(),
-                mesh_id: *remapped_mesh_id,
-                _padding: [0; 3],
-            }
+                .get(&model_info.name)
+                .map(|remapped_id| Instance {
+                    model_matrix: transform.compute_matrix().to_cols_array_2d(),
+                    mesh_id: *remapped_id,
+                    _padding: [0; 3],
+                })
         })
         .collect();
 
     if instances.is_empty() {
-        // If there are no instances, we can remove any existing scene data
-        // to prevent rendering from the previous frame.
         commands.remove_resource::<PerFrameSceneData>();
         return;
     }
 
-    // --- Create InstanceLookup Buffer ---
     let mut instance_lookups = Vec::new();
     let mut total_vertices_to_draw = 0;
     for (instance_id, instance) in instances.iter().enumerate() {
@@ -248,13 +213,6 @@ pub fn prepare_scene_data_system(
         return;
     }
 
-    log::info!(
-        "Per frame - Instances: {}, Vertices to draw: {}",
-        instances.len(),
-        total_vertices_to_draw
-    );
-
-    // --- Create GPU Buffers for per-frame data ---
     let instance_buffer = device.0.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Instance Buffer"),
         contents: bytemuck::cast_slice(&instances),
@@ -267,9 +225,8 @@ pub fn prepare_scene_data_system(
         usage: wgpu::BufferUsages::STORAGE,
     });
 
-    // --- Create Bind Group ---
     let mesh_bind_group = device.0.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("mesh_bind_group (per-frame)"),
+        label: Some("Mesh Bind Group"),
         layout: &pipeline.mesh_bind_group_layout,
         entries: &[
             wgpu::BindGroupEntry {
@@ -297,7 +254,6 @@ pub fn prepare_scene_data_system(
         ],
     });
 
-    // --- Insert resource for rendering system ---
     commands.insert_resource(PerFrameSceneData {
         mesh_bind_group,
         total_vertices_to_draw,

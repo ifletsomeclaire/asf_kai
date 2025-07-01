@@ -15,7 +15,7 @@ use crate::{
         camera::{camera_control_system, Camera, OrbitCamera},
         framerate::{FrameRate, frame_rate_system},
         input::{keyboard_input_system, Input},
-        model::{load_static_models_system, prepare_scene_data_system},
+        model::{load_models_from_db_system, prepare_scene_data_system},
         ui::{EguiCtx, LastSize, SpawnerState, UiState, ui_system},
     },
     renderer::{
@@ -39,6 +39,13 @@ struct Startup;
 
 #[derive(Resource)]
 pub struct InitialSize(pub wgpu::Extent3d);
+
+fn infallible_load_models_from_db_system(
+    commands: Commands,
+    device: Res<WgpuDevice>,
+) {
+    load_models_from_db_system(commands, device).unwrap();
+}
 
 pub struct Custom3d {
     pub world: World,
@@ -69,7 +76,7 @@ impl Custom3d {
             (
                 setup_triangle_pass_system,
                 setup_tonemapping_pass_system,
-                (setup_d3_pipeline_system, load_static_models_system).chain(),
+                (setup_d3_pipeline_system, infallible_load_models_from_db_system).chain(),
             )
                 .chain(),
         );

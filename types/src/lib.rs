@@ -1,14 +1,14 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
+use glam::Vec3;
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Mesh {
+    pub vertices: Vec<Vec3>,
+    pub indices: Vec<u32>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Model {
+    pub name: String,
+    pub meshes: Vec<Mesh>,
 }
