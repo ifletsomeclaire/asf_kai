@@ -23,6 +23,7 @@ redb = "2.6.0"
 types = { path = "../types" }
 bincode = "1.3.3"
 anyhow = "1.0"
+indexmap = { version = "2.2.6", features = ["serde"] }
 
 
 

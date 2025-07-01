@@ -110,7 +110,7 @@ pub fn ui_system(mut ui_params: UiSystemParams) {
                 let translation = ui_params.spawner_state.position;
                 ui_params.commands.spawn((
                     Model {
-                        mesh_id: model_info.mesh_id,
+                        mesh_name: model_info.name.clone(),
                     },
                     Transform::from_translation(translation),
                 ));

@@ -3,6 +3,7 @@ use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Mesh {
+    pub name: String,
     pub vertices: Vec<Vec3>,
     pub indices: Vec<u32>,
 }
