@@ -15,6 +15,7 @@ struct MeshDescription {
     index_count: u32,
     first_index: u32,
     base_vertex: i32,
+    _padding: u32,
 };
 
 // Describes a single object to be rendered.
@@ -27,6 +28,7 @@ struct Instance {
 struct InstanceLookup {
     instance_id: u32,
     first_vertex_of_instance: u32,
+    _padding: vec2<u32>,
 };
 
 struct ViewProjection {

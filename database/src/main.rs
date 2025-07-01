@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::env;
+use std::path::{Path, PathBuf};
 
 use log::{info, warn};
 use redb::{Database, Error, TableDefinition};
@@ -48,17 +49,20 @@ impl ModelDatabase {
                     ],
                 )?;
 
+                let num_meshes = scene.meshes.len();
                 let meshes = scene
                     .meshes
                     .into_iter()
-                    .map(|mesh| {
+                    .enumerate()
+                    .map(|(i, mesh)| {
+                        let unique_mesh_name = format!("{}-mesh-{}", model_name, i);
                         let vertices = mesh
                             .vertices
                             .into_iter()
                             .map(|v| glam::vec3(v.x, v.y, v.z))
                             .collect();
                         let indices = mesh.faces.into_iter().flat_map(|f| f.0).collect();
-                        Mesh { vertices, indices }
+                        Mesh { name: unique_mesh_name, vertices, indices }
                     })
                     .collect();
 
@@ -92,13 +96,29 @@ impl ModelDatabase {
 fn main() -> Result<(), anyhow::Error> {
     env_logger::init();
     info!("Starting database populator");
-    let db = ModelDatabase::new("assets/models.redb")?;
-    db.populate_from_assets("assets/models")?;
-    info!("Database populated successfully");
+
+    let mut workspace_root = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
+    workspace_root.pop(); // Go up to the workspace root from the crate root
+
+    let db_path = workspace_root.join("assets/models.redb");
+    let assets_path = workspace_root.join("assets/models");
+
+    let db = ModelDatabase::new(&db_path)?;
+    db.populate_from_assets(&assets_path)?;
+    info!("Database populated successfully from {:?}", assets_path);
 
     // Example of retrieving a model
     if let Some(model) = db.get_model("cube")? {
-        info!("Successfully retrieved model 'cube' with {} meshes", model.meshes.len());
+        info!("Successfully retrieved model 'cube' with {} meshes.", model.meshes.len());
+        for (i, mesh) in model.meshes.iter().enumerate() {
+            info!("  Mesh {}: '{}'", i, mesh.name);
+            info!("    - Vertices: {}", mesh.vertices.len());
+            info!("    - Indices: {}", mesh.indices.len());
+            // Print first 3 vertices for inspection
+            for (j, v) in mesh.vertices.iter().take(3).enumerate() {
+                info!("      - Vertex {}: [{}, {}, {}]", j, v.x, v.y, v.z);
+            }
+        }
     } else {
         warn!("Could not retrieve model 'cube'");
     }

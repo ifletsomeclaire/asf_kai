@@ -1,10 +1,12 @@
 use bevy_ecs::prelude::*;
 use bytemuck::{Pod, Zeroable};
 use redb::{Database, TableDefinition};
-use std::collections::HashMap;
+use std::env;
+use std::path::PathBuf;
 use types::Model as TypesModel;
 use wgpu::util::DeviceExt;
 use bevy_transform::components::GlobalTransform;
+use indexmap::IndexMap;
 
 use crate::renderer::{core::WgpuDevice, d3_pipeline::D3Pipeline};
 
@@ -38,16 +40,16 @@ struct Instance {
 struct InstanceLookup {
     instance_id: u32,
     first_vertex_of_instance: u32,
+    _padding: [u32; 2],
 }
 
-#[derive(Component, Clone, Copy)]
+#[derive(Component, Clone)]
 pub struct Model {
-    pub mesh_id: u32,
+    pub mesh_name: String,
 }
 
 pub struct ModelInfo {
     pub name: String,
-    pub mesh_id: u32,
 }
 
 #[derive(Resource, Default)]
@@ -61,7 +63,7 @@ pub struct StaticModelData {
     pub index_buffer: wgpu::Buffer,
     pub mesh_description_buffer: wgpu::Buffer,
     pub mesh_descriptions: Vec<MeshDescription>,
-    pub mesh_id_remap: HashMap<String, u32>,
+    pub mesh_id_remap: IndexMap<String, u32>,
 }
 
 #[derive(Resource)]
@@ -77,24 +79,24 @@ pub fn load_models_from_db_system(
     let mut all_vertices: Vec<Vertex> = Vec::new();
     let mut all_indices: Vec<u32> = Vec::new();
     let mut mesh_descriptions = Vec::new();
-    let mut mesh_id_remap: HashMap<String, u32> = HashMap::new();
+    let mut mesh_id_remap: IndexMap<String, u32> = IndexMap::new();
     let mut available_models = AvailableModels::default();
 
-    let db = Database::open("assets/models.redb")?;
+    let mut workspace_root = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
+    workspace_root.pop(); // Go up to the workspace root from the crate root
+    let db_path = workspace_root.join("assets/models.redb");
+
+    let db = Database::open(&db_path)?;
     let read_txn = db.begin_read()?;
     let table = read_txn.open_table(MODEL_TABLE)?;
 
-    log::info!("Loading models from database...");
-    let mut count = 0;
     for result in table.range::<&str>(..)? {
-        count += 1;
         let (key, value) = result?;
-        let model_name = key.value().to_string();
-        log::info!("  - Loading model: {}", model_name);
+        let _model_name = key.value().to_string();
         let model_data = value.value();
         let model: TypesModel = bincode::deserialize(model_data)?;
 
-        for (mesh_index, mesh) in model.meshes.iter().enumerate() {
+        for mesh in model.meshes {
             let base_vertex = all_vertices.len() as i32;
             let first_index = all_indices.len() as u32;
 
@@ -111,17 +113,11 @@ pub fn load_models_from_db_system(
             all_vertices.extend(vertices);
             all_indices.extend(mesh.indices.clone());
 
-            let new_mesh_id = mesh_descriptions.len() as u32;
-            let unique_model_name = if model.meshes.len() > 1 {
-                format!("{}-{}", model_name, mesh_index)
-            } else {
-                model_name.clone()
-            };
+            let new_shader_mesh_id = mesh_descriptions.len() as u32;
 
-            mesh_id_remap.insert(unique_model_name.clone(), new_mesh_id);
+            mesh_id_remap.insert(mesh.name.clone(), new_shader_mesh_id);
             available_models.models.push(ModelInfo {
-                name: unique_model_name,
-                mesh_id: new_mesh_id,
+                name: mesh.name,
             });
 
             mesh_descriptions.push(MeshDescription {
@@ -132,7 +128,6 @@ pub fn load_models_from_db_system(
             });
         }
     }
-    log::info!("Finished loading {} models.", count);
 
     let vertex_buffer = device.0.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Global Vertex Buffer"),
@@ -170,16 +165,14 @@ pub fn prepare_scene_data_system(
     device: Res<WgpuDevice>,
     pipeline: Res<D3Pipeline>,
     static_model_data: Res<StaticModelData>,
-    available_models: Res<AvailableModels>,
     query: Query<(&Model, &GlobalTransform)>,
 ) {
     let instances: Vec<Instance> = query
         .iter()
         .filter_map(|(model, transform)| {
-            let model_info = available_models.models.get(model.mesh_id as usize)?;
             static_model_data
                 .mesh_id_remap
-                .get(&model_info.name)
+                .get(&model.mesh_name)
                 .map(|remapped_id| Instance {
                     model_matrix: transform.compute_matrix().to_cols_array_2d(),
                     mesh_id: *remapped_id,
@@ -202,6 +195,7 @@ pub fn prepare_scene_data_system(
             instance_lookups.push(InstanceLookup {
                 instance_id: instance_id as u32,
                 first_vertex_of_instance,
+                _padding: [0; 2],
             });
         }
         total_vertices_to_draw += mesh_desc.index_count;
