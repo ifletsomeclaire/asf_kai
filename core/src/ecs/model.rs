@@ -10,8 +10,7 @@ use bevy_transform::components::GlobalTransform;
 use bevy_transform::components::Transform;
 use bytemuck::{Pod, Zeroable};
 use image;
-use log::{info, warn};
-use redb::{Database, TableDefinition};
+use redb::{Database, TableDefinition, ReadableTable, ReadableTableMetadata};
 use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
@@ -80,11 +79,38 @@ pub struct PerFrameSceneData {
     pub total_vertices_to_draw: u32,
 }
 
+#[derive(Resource)]
+pub struct AssetReports {
+    pub vertex_total_free: u32,
+    pub vertex_largest_free: u32,
+    pub index_total_free: u32,
+    pub index_largest_free: u32,
+    pub model_count: u64,
+    pub texture_count: u64,
+    pub database_file_size: u64,
+    pub last_generated: std::time::Instant,
+}
+
+impl Default for AssetReports {
+    fn default() -> Self {
+        Self {
+            vertex_total_free: 0,
+            vertex_largest_free: 0,
+            index_total_free: 0,
+            index_largest_free: 0,
+            model_count: 0,
+            texture_count: 0,
+            database_file_size: 0,
+            last_generated: std::time::Instant::now() - std::time::Duration::from_secs(10), // Make it old so first run triggers
+        }
+    }
+}
+
 pub fn load_models_from_db_system(
     mut commands: Commands,
     mut asset_server: ResMut<AssetServer>,
     queue: Res<WgpuQueue>,
-) -> Result<(), anyhow::Error> {
+) -> Result<(), Box<dyn std::error::Error>> {
     println!("--- Running load_models_from_db_system ---");
     let mut available_models = AvailableModels::default();
 
@@ -103,7 +129,7 @@ pub fn load_models_from_db_system(
         let texture_bytes = value.value();
         let texture_image = image::load_from_memory(texture_bytes)?;
         let texture_handle = asset_server.load_texture(&texture_image, &queue.0).unwrap();
-        info!("[CORE] Loaded texture '{}' from DB.", texture_name);
+        println!("[CORE] Loaded texture '{}' from DB.", texture_name);
         asset_server.register_texture_handle(texture_name, texture_handle);
     }
 
@@ -123,7 +149,7 @@ pub fn load_models_from_db_system(
             let texture_handle = if let Some(texture_name) = &cpu_mesh.texture_name {
                 // If the texture isn't in the DB, this will fail. For now, we just won't assign one.
                 let handle = asset_server.get_texture_handle(texture_name).cloned();
-                info!(
+                println!(
                     "[CORE] Mesh '{}' requests texture '{}'. Handle found: {}",
                     cpu_mesh.name,
                     texture_name,
@@ -131,7 +157,7 @@ pub fn load_models_from_db_system(
                 );
                 handle
             } else {
-                info!("Mesh '{}' has no texture.", cpu_mesh.name);
+                println!("Mesh '{}' has no texture.", cpu_mesh.name);
                 None
             };
 
@@ -208,20 +234,20 @@ pub fn prepare_scene_data_system(
         let texture_array_index = if let Some(handle) = &model.texture_handle {
             if let Some(gpu_texture) = asset_server.get_gpu_texture(handle) {
                 let index = gpu_texture.texture_array_index;
-                info!(
+                println!(
                     "[CORE] Model '{}' -> Texture Index: {}",
                     model.mesh_name, index
                 );
                 index
             } else {
-                warn!(
+                eprintln!(
                     "[CORE] Model '{}' has a texture handle but NO GpuTexture!",
                     model.mesh_name
                 );
                 u32::MAX // Sentinel for no texture
             }
         } else {
-            info!("[CORE] Model '{}' has no texture handle.", model.mesh_name);
+            println!("[CORE] Model '{}' has no texture handle.", model.mesh_name);
             u32::MAX // Sentinel for no texture
         };
 
@@ -327,4 +353,57 @@ pub fn process_asset_deallocations_system(mut asset_server: ResMut<AssetServer>)
             }
         }
     }
+}
+
+pub fn generate_asset_reports_system(
+    asset_server: Res<AssetServer>,
+    mut reports: ResMut<AssetReports>,
+) {
+    // Only update reports every 5 seconds to avoid spamming
+    if reports.last_generated.elapsed().as_secs() < 5 {
+        return;
+    }
+    
+    // Get offset allocator reports
+    let vertex_report = asset_server.mesh_pool.vertex_allocator.storage_report();
+    let index_report = asset_server.mesh_pool.index_allocator.storage_report();
+    
+    reports.vertex_total_free = vertex_report.total_free_space;
+    reports.vertex_largest_free = vertex_report.largest_free_region;
+    reports.index_total_free = index_report.total_free_space;
+    reports.index_largest_free = index_report.largest_free_region;
+    
+    // Get database reports
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().unwrap();
+    let db_path = workspace_root.join("assets/models.redb");
+    
+    if let Ok(db) = Database::open(&db_path) {
+        if let Ok(read_txn) = db.begin_read() {
+            if let Ok(model_table) = read_txn.open_table(MODEL_TABLE) {
+                reports.model_count = model_table.len().unwrap_or(0);
+            }
+            
+            if let Ok(texture_table) = read_txn.open_table(TEXTURE_TABLE) {
+                reports.texture_count = texture_table.len().unwrap_or(0);
+            }
+        }
+        
+        if let Ok(metadata) = std::fs::metadata(&db_path) {
+            reports.database_file_size = metadata.len();
+        }
+    }
+    
+    reports.last_generated = std::time::Instant::now();
+    
+    println!("\n=== ASSET SERVER REPORTS (Updated) ===");
+    println!("GPU Memory Pools:");
+    println!("  - Vertex Buffer: {} bytes free, largest: {} bytes", 
+             reports.vertex_total_free, reports.vertex_largest_free);
+    println!("  - Index Buffer: {} bytes free, largest: {} bytes", 
+             reports.index_total_free, reports.index_largest_free);
+    println!("Database:");
+    println!("  - Models: {}, Textures: {}", reports.model_count, reports.texture_count);
+    println!("  - Database file size: {} bytes", reports.database_file_size);
+    println!("=== END REPORTS ===\n");
 }

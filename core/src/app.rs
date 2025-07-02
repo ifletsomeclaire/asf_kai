@@ -15,7 +15,7 @@ use crate::{
         input::{Input, keyboard_input_system},
         model::{
             load_models_from_db_system, prepare_scene_data_system,
-            process_asset_deallocations_system,
+            process_asset_deallocations_system, generate_asset_reports_system, AssetReports,
         },
         ui::{EguiCtx, LastSize, SpawnerState, UiState, ui_system},
     },
@@ -115,6 +115,7 @@ impl Custom3d {
         world.init_resource::<UiState>();
         world.init_resource::<SpawnerState>();
         world.init_resource::<LastSize>();
+        world.init_resource::<AssetReports>();
 
         world.spawn((
             Camera::default(),
@@ -148,6 +149,7 @@ impl Custom3d {
                 render_triangle_system.run_if(|ui_state: Res<UiState>| ui_state.render_triangle),
                 render_d3_pipeline_system.run_if(|ui_state: Res<UiState>| ui_state.render_model),
                 process_asset_deallocations_system,
+                generate_asset_reports_system,
             )
                 .chain(),
         );

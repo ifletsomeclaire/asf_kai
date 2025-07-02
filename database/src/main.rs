@@ -2,12 +2,10 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use log::{info, warn};
-use redb::{Database, Error, TableDefinition};
+use redb::{Database, TableDefinition};
 use russimp::material::TextureType;
 use russimp::scene::{PostProcess, Scene};
 use types::{Mesh, Model};
-use walkdir::WalkDir;
 
 const MODEL_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("models");
 const TEXTURE_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("textures");
@@ -17,27 +15,35 @@ pub struct ModelDatabase {
 }
 
 impl ModelDatabase {
-    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
         let db = Database::create(path)?;
         Ok(Self { db })
     }
 
-    pub fn populate_from_assets<P: AsRef<Path>>(&self, assets_dir: P) -> Result<(), anyhow::Error> {
+    pub fn populate_from_assets<P: AsRef<Path>>(&self, assets_dir: P) -> Result<(), Box<dyn std::error::Error>> {
         let write_txn = self.db.begin_write()?;
         {
             let mut model_table = write_txn.open_table(MODEL_TABLE)?;
             let mut texture_table = write_txn.open_table(TEXTURE_TABLE)?;
-            for entry in WalkDir::new(assets_dir).into_iter().filter_map(|e| e.ok()) {
-                if !entry.file_type().is_file() {
-                    continue;
+            
+            fn visit_dir(dir: &Path, model_table: &mut redb::Table<&str, &[u8]>, texture_table: &mut redb::Table<&str, &[u8]>) -> Result<(), Box<dyn std::error::Error>> {
+                if dir.is_dir() {
+                    for entry in fs::read_dir(dir)? {
+                        let entry = entry?;
+                        let path = entry.path();
+                        if path.is_dir() {
+                            visit_dir(&path, model_table, texture_table)?;
+                        } else {
+                            process_file(&path, model_table, texture_table)?;
+                        }
+                    }
                 }
+                Ok(())
+            }
 
-                let path = entry.path();
+            fn process_file(path: &Path, model_table: &mut redb::Table<&str, &[u8]>, texture_table: &mut redb::Table<&str, &[u8]>) -> Result<(), Box<dyn std::error::Error>> {
                 let extension = path.extension().and_then(|s| s.to_str());
-                let file_name = path
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or_default();
+                let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or_default();
 
                 match extension {
                     Some("gltf") | Some("glb") => {
@@ -46,7 +52,7 @@ impl ModelDatabase {
                             .and_then(|s| s.to_str())
                             .unwrap_or("unknown_model");
 
-                        info!("Processing model: {}", model_name);
+                        println!("Processing model: {}", model_name);
 
                         let scene = Scene::from_file(
                             path.to_str().unwrap(),
@@ -86,7 +92,7 @@ impl ModelDatabase {
                                             texture_name = Some(new_name);
                                         },
                                         russimp::material::DataContent::Texel(_) => {
-                                            warn!("Found uncompressed texel data for model '{}'. This is not currently supported for embedded textures.", model_name);
+                                            eprintln!("Found uncompressed texel data for model '{}'. This is not currently supported for embedded textures.", model_name);
                                         }
                                     }
                                 } else {
@@ -103,7 +109,7 @@ impl ModelDatabase {
                                     }
                                 }
 
-                                info!("[DB] Mesh: '{}' -> Found texture: {:?}", unique_mesh_name, texture_name);
+                                println!("[DB] Mesh: '{}' -> Found texture: {:?}", unique_mesh_name, texture_name);
 
                                 let vertices: Vec<types::Vertex> = mesh
                                     .vertices
@@ -145,7 +151,7 @@ impl ModelDatabase {
                         model_table.insert(model_name, encoded.as_slice())?;
                     }
                     Some("png") => {
-                        info!("Processing texture: {}", file_name);
+                        println!("Processing texture: {}", file_name);
                         let texture_bytes = fs::read(path)?;
                         texture_table.insert(file_name, texture_bytes.as_slice())?;
                     }
@@ -153,13 +159,16 @@ impl ModelDatabase {
                         // Skip other file types
                     }
                 }
+                Ok(())
             }
+
+            visit_dir(assets_dir.as_ref(), &mut model_table, &mut texture_table)?;
         }
         write_txn.commit()?;
         Ok(())
     }
 
-    pub fn get_model(&self, name: &str) -> Result<Option<Model>, anyhow::Error> {
+    pub fn get_model(&self, name: &str) -> Result<Option<Model>, Box<dyn std::error::Error>> {
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table(MODEL_TABLE)?;
         match table.get(name)? {
@@ -173,9 +182,8 @@ impl ModelDatabase {
     }
 }
 
-fn main() -> Result<(), anyhow::Error> {
-    env_logger::init();
-    info!("Starting database populator");
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Starting database populator");
 
     let mut workspace_root = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
     workspace_root.pop(); // Go up to the workspace root from the crate root
@@ -185,28 +193,28 @@ fn main() -> Result<(), anyhow::Error> {
 
     let db = ModelDatabase::new(&db_path)?;
     db.populate_from_assets(&assets_path)?;
-    info!("Database populated successfully from {:?}", assets_path);
+    println!("Database populated successfully from {:?}", assets_path);
 
     // Example of retrieving a model
     if let Some(model) = db.get_model("cube")? {
-        info!(
+        println!(
             "Successfully retrieved model 'cube' with {} meshes.",
             model.meshes.len()
         );
         for mesh in &model.meshes {
-            info!("    - Mesh: {}", mesh.name);
-            info!("      - Vertices: {}", mesh.vertices.len());
-            info!("      - Indices: {}", mesh.indices.len());
+            println!("    - Mesh: {}", mesh.name);
+            println!("      - Vertices: {}", mesh.vertices.len());
+            println!("      - Indices: {}", mesh.indices.len());
             // Print first 3 vertices for inspection
             for (j, v) in mesh.vertices.iter().take(3).enumerate() {
-                info!(
+                println!(
                     "      - Vertex {}: [{}, {}, {}]",
                     j, v.position.x, v.position.y, v.position.z
                 );
             }
         }
     } else {
-        warn!("Could not retrieve model 'cube'");
+        eprintln!("Could not retrieve model 'cube'");
     }
 
     Ok(())

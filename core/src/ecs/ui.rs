@@ -7,7 +7,7 @@ use crate::{
     config::Config,
     ecs::{
         framerate::FrameRate,
-        model::{AvailableModels, Model},
+        model::{AvailableModels, Model, AssetReports},
     },
     renderer::events::ResizeEvent,
 };
@@ -60,6 +60,7 @@ pub struct UiSystemParams<'w, 's> {
     available_models: Res<'w, AvailableModels>,
     spawner_state: ResMut<'w, SpawnerState>,
     model_query: Query<'w, 's, Entity, With<Model>>,
+    asset_reports: Res<'w, AssetReports>,
 }
 
 pub fn ui_system(mut ui_params: UiSystemParams) {
@@ -107,6 +108,36 @@ pub fn ui_system(mut ui_params: UiSystemParams) {
             ui_params.config.save();
             ui.label("(Requires restart)");
         }
+
+        // Asset Reports Section
+        egui::CollapsingHeader::new("🗄️ Asset Reports").show(ui, |ui| {
+            ui.label(format!("GPU Memory Pools:"));
+            ui.indent("gpu_memory", |ui| {
+                ui.label(format!("Vertex Buffer: {:.1} MB free, largest: {:.1} MB", 
+                    ui_params.asset_reports.vertex_total_free as f32 / 1_048_576.0,
+                    ui_params.asset_reports.vertex_largest_free as f32 / 1_048_576.0));
+                ui.label(format!("Index Buffer: {:.1} MB free, largest: {:.1} MB", 
+                    ui_params.asset_reports.index_total_free as f32 / 1_048_576.0,
+                    ui_params.asset_reports.index_largest_free as f32 / 1_048_576.0));
+            });
+            
+            ui.separator();
+            
+            ui.label(format!("Database:"));
+            ui.indent("database", |ui| {
+                ui.label(format!("Models: {}", ui_params.asset_reports.model_count));
+                ui.label(format!("Textures: {}", ui_params.asset_reports.texture_count));
+                ui.label(format!("DB Size: {:.1} MB", 
+                    ui_params.asset_reports.database_file_size as f32 / 1_048_576.0));
+            });
+            
+            ui.separator();
+            
+            ui.small(format!("Last updated: {:.1}s ago", 
+                ui_params.asset_reports.last_generated.elapsed().as_secs_f32()));
+        });
+
+        ui.separator();
     });
 
     egui::Window::new("Spawner").show(ctx, |ui| {

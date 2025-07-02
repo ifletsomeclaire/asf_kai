@@ -10,7 +10,6 @@ use eframe::egui_wgpu::{WgpuConfiguration, WgpuSetupCreateNew};
 use wgpu::{FeaturesWGPU, FeaturesWebGPU};
 
 fn main() -> eframe::Result<()> {
-    tracing_subscriber::fmt::init();
     let config = Config::load();
 
     let native_options = eframe::NativeOptions {

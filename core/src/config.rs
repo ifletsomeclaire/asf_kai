@@ -13,8 +13,17 @@ impl Config {
     const CONFIG_FILE: &'static str = "config.ron";
 
     fn config_path() -> Option<PathBuf> {
-        directories::ProjectDirs::from("com", "AsfKai", Self::APP_NAME)
-            .map(|dirs| dirs.config_dir().join(Self::CONFIG_FILE))
+        if let Ok(home) = std::env::var("HOME") {
+            let config_dir = PathBuf::from(home).join(".config").join(Self::APP_NAME);
+            Some(config_dir.join(Self::CONFIG_FILE))
+        } else if let Ok(home) = std::env::var("USERPROFILE") {
+            // Windows fallback
+            let config_dir = PathBuf::from(home).join("AppData").join("Roaming").join(Self::APP_NAME);
+            Some(config_dir.join(Self::CONFIG_FILE))
+        } else {
+            // Final fallback - use current directory
+            Some(PathBuf::from(Self::CONFIG_FILE))
+        }
     }
 
     pub fn save(&self) {
