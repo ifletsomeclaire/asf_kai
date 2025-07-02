@@ -56,12 +56,16 @@ impl ModelDatabase {
                     .enumerate()
                     .map(|(i, mesh)| {
                         let unique_mesh_name = format!("{}-mesh-{}", model_name, i);
-                        let vertices = mesh
+                        let vertices: Vec<types::Vertex> = mesh
                             .vertices
                             .into_iter()
-                            .map(|v| glam::vec3(v.x, v.y, v.z))
+                            .map(|v| types::Vertex {
+                                position: glam::vec3(v.x, v.y, v.z),
+                                normal: glam::Vec3::ZERO, // Placeholder
+                                uv: glam::Vec2::ZERO,     // Placeholder
+                            })
                             .collect();
-                        let indices = mesh.faces.into_iter().flat_map(|f| f.0).collect();
+                        let indices: Vec<u32> = mesh.faces.into_iter().flat_map(|f| f.0).collect();
                         Mesh { name: unique_mesh_name, vertices, indices }
                     })
                     .collect();
@@ -110,13 +114,16 @@ fn main() -> Result<(), anyhow::Error> {
     // Example of retrieving a model
     if let Some(model) = db.get_model("cube")? {
         info!("Successfully retrieved model 'cube' with {} meshes.", model.meshes.len());
-        for (i, mesh) in model.meshes.iter().enumerate() {
-            info!("  Mesh {}: '{}'", i, mesh.name);
-            info!("    - Vertices: {}", mesh.vertices.len());
-            info!("    - Indices: {}", mesh.indices.len());
+        for mesh in &model.meshes {
+            info!("    - Mesh: {}", mesh.name);
+            info!("      - Vertices: {}", mesh.vertices.len());
+            info!("      - Indices: {}", mesh.indices.len());
             // Print first 3 vertices for inspection
             for (j, v) in mesh.vertices.iter().take(3).enumerate() {
-                info!("      - Vertex {}: [{}, {}, {}]", j, v.x, v.y, v.z);
+                info!(
+                    "      - Vertex {}: [{}, {}, {}]",
+                    j, v.position.x, v.position.y, v.position.z
+                );
             }
         }
     } else {

@@ -47,6 +47,17 @@ impl Default for OrbitCamera {
     }
 }
 
+pub fn setup_camera_transform_system(
+    mut query: Query<&mut Transform, With<Camera>>,
+    orbit_camera: Res<OrbitCamera>,
+) {
+    if let Ok(mut transform) = query.single_mut() {
+        let rotation = Quat::from_rotation_y(orbit_camera.yaw) * Quat::from_rotation_x(orbit_camera.pitch);
+        transform.translation = orbit_camera.target + rotation * (Vec3::Z * orbit_camera.distance);
+        transform.look_at(orbit_camera.target, Vec3::Y);
+    }
+}
+
 pub fn camera_control_system(
     mut query: Query<&mut Transform, With<Camera>>,
     mut orbit_camera: ResMut<OrbitCamera>,

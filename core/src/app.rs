@@ -12,16 +12,18 @@ use bevy_transform::{
 use crate::{
     config::Config,
     ecs::{
-        camera::{camera_control_system, Camera, OrbitCamera},
+        camera::{camera_control_system, Camera, OrbitCamera, setup_camera_transform_system},
         framerate::{FrameRate, frame_rate_system},
         input::{keyboard_input_system, Input},
         model::{load_models_from_db_system, prepare_scene_data_system},
         ui::{EguiCtx, LastSize, SpawnerState, UiState, ui_system},
     },
     renderer::{
-        core::{WgpuDevice, WgpuQueue, WgpuRenderState},
+        assets::AssetServer,
+        core::{initialize_renderer, WgpuDevice, WgpuQueue, WgpuRenderState},
         d3_pipeline::{
             render_d3_pipeline_system, setup_d3_pipeline_system, update_camera_buffer_system,
+            setup_depth_texture_system, resize_depth_texture_system,
         },
         events::ResizeEvent,
         tonemapping_pass::{
@@ -42,9 +44,10 @@ pub struct InitialSize(pub wgpu::Extent3d);
 
 fn infallible_load_models_from_db_system(
     commands: Commands,
-    device: Res<WgpuDevice>,
+    asset_server: ResMut<AssetServer>,
+    queue: Res<WgpuQueue>,
 ) {
-    load_models_from_db_system(commands, device).unwrap();
+    load_models_from_db_system(commands, asset_server, queue).unwrap();
 }
 
 pub struct Custom3d {
@@ -58,9 +61,16 @@ impl Custom3d {
         let config: Config = Default::default();
 
         let mut world = World::default();
-        world.insert_resource(WgpuDevice(Arc::new(wgpu_render_state.device.clone())));
-        world.insert_resource(WgpuQueue(Arc::new(wgpu_render_state.queue.clone())));
+
+        // --- Core Resource Initialization ---
+        let device = Arc::new(wgpu_render_state.device.clone());
+        let queue = Arc::new(wgpu_render_state.queue.clone());
+        world.insert_resource(WgpuDevice(device.clone()));
+        world.insert_resource(WgpuQueue(queue));
         world.insert_resource(WgpuRenderState(wgpu_render_state.clone()));
+        initialize_renderer(&mut world, &device); // Initialize AssetServer here
+        // --- End Core Resource Initialization ---
+
         world.insert_resource(config);
         world.init_resource::<Events<ResizeEvent>>();
 
@@ -71,12 +81,18 @@ impl Custom3d {
             depth_or_array_layers: 1,
         }));
 
+        world.init_resource::<OrbitCamera>();
+        world.insert_resource(EguiCtx(cc.egui_ctx.clone()));
+
         let mut startup_schedule = Schedule::new(Startup);
         startup_schedule.add_systems(
             (
                 setup_triangle_pass_system,
                 setup_tonemapping_pass_system,
-                (setup_d3_pipeline_system, infallible_load_models_from_db_system).chain(),
+                setup_depth_texture_system,
+                setup_d3_pipeline_system,
+                infallible_load_models_from_db_system,
+                setup_camera_transform_system,
             )
                 .chain(),
         );
@@ -98,8 +114,6 @@ impl Custom3d {
         world.init_resource::<UiState>();
         world.init_resource::<SpawnerState>();
         world.init_resource::<LastSize>();
-        world.init_resource::<OrbitCamera>();
-        world.insert_resource(EguiCtx(cc.egui_ctx.clone()));
 
         world.spawn((
             Camera::default(),
@@ -135,6 +149,7 @@ impl Custom3d {
         schedule.add_systems(
             (
                 resize_hdr_texture_system,
+                resize_depth_texture_system,
                 update_camera_aspect_ratio_system,
             )
                 .chain(),

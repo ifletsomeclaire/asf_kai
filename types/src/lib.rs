@@ -1,10 +1,18 @@
-use glam::Vec3;
-use serde::{Serialize, Deserialize};
+use glam::{Vec2, Vec3};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, bytemuck::Pod, bytemuck::Zeroable)]
+#[repr(C)]
+pub struct Vertex {
+    pub position: Vec3,
+    pub normal: Vec3,
+    pub uv: Vec2,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Mesh {
     pub name: String,
-    pub vertices: Vec<Vec3>,
+    pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
 }
 

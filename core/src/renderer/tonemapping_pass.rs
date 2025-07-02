@@ -1,16 +1,14 @@
 use bevy_ecs::{event::EventReader, prelude::*};
 use eframe::egui_wgpu::{self, CallbackTrait, wgpu};
 use std::sync::Arc;
-
-use super::{
-    core::{HDR_FORMAT, WgpuDevice, WgpuRenderState},
-    events::ResizeEvent,
+use crate::{
+    app::InitialSize,
+    renderer::{
+        core::{WgpuDevice, HDR_FORMAT, WgpuQueue, WgpuRenderState},
+        events::ResizeEvent,
+    },
 };
-
-#[derive(Resource)]
-pub struct HdrTexture {
-    pub view: wgpu::TextureView,
-}
+use bevy_derive::{Deref, DerefMut};
 
 #[derive(Resource, Clone)]
 pub struct TonemappingPass {
@@ -19,6 +17,12 @@ pub struct TonemappingPass {
 }
 
 #[derive(Resource)]
+pub struct HdrTexture {
+    pub view: wgpu::TextureView,
+    pub size: wgpu::Extent3d,
+}
+
+#[derive(Resource, Deref, DerefMut)]
 pub struct TonemappingBindGroup(pub wgpu::BindGroup);
 
 pub struct FinalBlitCallback {}
@@ -55,6 +59,7 @@ pub fn resize_hdr_texture_system(
     device: Res<WgpuDevice>,
     tonemapping_pass: Res<TonemappingPass>,
     wgpu_render_state: Res<WgpuRenderState>,
+    mut hdr_texture: ResMut<HdrTexture>,
 ) {
     for event in resize_events.read() {
         if event.0.width == 0 || event.0.height == 0 {
@@ -113,6 +118,7 @@ pub fn resize_hdr_texture_system(
         // Insert new texture resource
         commands.insert_resource(HdrTexture {
             view: hdr_view,
+            size: new_size,
         });
     }
 }
@@ -127,16 +133,17 @@ pub fn setup_tonemapping_pass_system(
     let wgpu_render_state = &wgpu_render_state_res.0;
 
     let size = initial_size.0;
-    let hdr_texture = device.create_texture(&wgpu::TextureDescriptor {
+    let hdr_texture_desc = wgpu::TextureDescriptor {
         label: Some("hdr_texture"),
         size,
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: HDR_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-        view_formats: &[],
-    });
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[HDR_FORMAT],
+    };
+    let hdr_texture = device.create_texture(&hdr_texture_desc);
     let hdr_view = hdr_texture.create_view(&wgpu::TextureViewDescriptor::default());
     let hdr_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some("hdr_sampler"),
@@ -224,5 +231,31 @@ pub fn setup_tonemapping_pass_system(
 
     commands.insert_resource(HdrTexture {
         view: hdr_view,
+        size,
     });
+}
+
+pub fn clear_hdr_texture_system(
+    device: Res<WgpuDevice>,
+    queue: Res<WgpuQueue>,
+    hdr_texture: Res<HdrTexture>,
+) {
+    let mut encoder = device.0.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("clear_hdr_texture_encoder"),
+    });
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("clear_hdr_texture_pass"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: &hdr_texture.view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+    });
+    queue.0.submit(Some(encoder.finish()));
 }

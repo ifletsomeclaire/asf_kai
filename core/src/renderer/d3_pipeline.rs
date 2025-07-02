@@ -3,11 +3,19 @@ use std::num::NonZeroU64;
 use wgpu::util::DeviceExt;
 use bevy_transform::components::GlobalTransform;
 
-use super::core::{HDR_FORMAT, WgpuDevice, WgpuQueue};
-use crate::ecs::{
+use super::{core::{HDR_FORMAT, WgpuDevice, WgpuQueue}, tonemapping_pass::{HdrTexture, resize_hdr_texture_system}};
+use crate::{ecs::{
     camera::Camera,
     model::PerFrameSceneData,
-};
+}, renderer::events::ResizeEvent};
+
+pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+#[derive(Resource)]
+pub struct DepthTexture {
+    pub texture: wgpu::Texture,
+    pub view: wgpu::TextureView,
+}
 
 #[derive(Resource)]
 pub struct D3Pipeline {
@@ -116,8 +124,17 @@ pub fn setup_d3_pipeline_system(mut commands: Commands, device_res: Res<WgpuDevi
             targets: &[Some(HDR_FORMAT.into())],
             compilation_options: Default::default(),
         }),
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: None,
+        primitive: wgpu::PrimitiveState {
+            cull_mode: Some(wgpu::Face::Back),
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
         multisample: wgpu::MultisampleState::default(),
         multiview: None,
         cache: None,
@@ -128,6 +145,45 @@ pub fn setup_d3_pipeline_system(mut commands: Commands, device_res: Res<WgpuDevi
         camera_bind_group_layout,
         mesh_bind_group_layout,
     });
+}
+
+pub fn setup_depth_texture_system(mut commands: Commands, device: Res<WgpuDevice>, hdr_texture: Res<HdrTexture>) {
+    let size = hdr_texture.size;
+    let desc = wgpu::TextureDescriptor {
+        label: Some("depth_texture"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: DEPTH_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[DEPTH_FORMAT],
+    };
+    let texture = device.0.create_texture(&desc);
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    commands.insert_resource(DepthTexture { texture, view });
+}
+
+pub fn resize_depth_texture_system(
+    mut events: EventReader<ResizeEvent>,
+    device: Res<WgpuDevice>,
+    mut depth_texture: ResMut<DepthTexture>,
+) {
+    for event in events.read() {
+        let size = event.0;
+        let desc = wgpu::TextureDescriptor {
+            label: Some("depth_texture"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[DEPTH_FORMAT],
+        };
+        depth_texture.texture = device.0.create_texture(&desc);
+        depth_texture.view = depth_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
+    }
 }
 
 #[derive(Resource)]
@@ -168,14 +224,25 @@ pub fn render_d3_pipeline_system(
     _queue: Res<WgpuQueue>,
     pipeline: Res<D3Pipeline>,
     hdr_texture: Res<super::tonemapping_pass::HdrTexture>,
+    depth_texture: Res<DepthTexture>,
     scene_data: Option<Res<PerFrameSceneData>>,
     camera_bind_group: Option<Res<CameraBindGroup>>,
 ) {
+    println!("--- Running render_d3_pipeline_system ---");
     if scene_data.is_none() || camera_bind_group.is_none() {
+        if scene_data.is_none() {
+            println!("  - scene_data is None. Bailing.");
+        }
+        if camera_bind_group.is_none() {
+            println!("  - camera_bind_group is None. Bailing.");
+        }
         return;
     }
     let scene_data = scene_data.unwrap();
     let camera_bind_group = camera_bind_group.unwrap();
+
+    println!("  - Scene data and camera bind group are present.");
+    println!("  - Total vertices to draw: {}", scene_data.total_vertices_to_draw);
 
     let mut encoder = _device.0.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("3d_render_encoder"),
@@ -192,16 +259,26 @@ pub fn render_d3_pipeline_system(
                     store: wgpu::StoreOp::Store,
                 },
             })],
-            depth_stencil_attachment: None,
-            occlusion_query_set: None,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth_texture.view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
             timestamp_writes: None,
+            occlusion_query_set: None,
         });
 
+        println!("  - Beginning render pass.");
         render_pass.set_pipeline(&pipeline.pipeline);
         render_pass.set_bind_group(0, &camera_bind_group.0, &[]);
         render_pass.set_bind_group(1, &scene_data.mesh_bind_group, &[]);
         render_pass.draw(0..scene_data.total_vertices_to_draw, 0..1);
     }
 
+    println!("  - Submitting command encoder.");
     _queue.0.submit(Some(encoder.finish()));
+    println!("--- Finished render_d3_pipeline_system ---");
 } 

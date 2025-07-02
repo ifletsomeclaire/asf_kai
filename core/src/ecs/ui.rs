@@ -11,8 +11,8 @@ use crate::{
     },
     renderer::events::ResizeEvent,
 };
-use bevy_transform::components::Transform;
-use glam::Vec3;
+use bevy_transform::components::{Transform, GlobalTransform};
+use glam::{Quat, Vec3};
 
 #[derive(Resource, Deref)]
 pub struct EguiCtx(pub egui::Context);
@@ -20,10 +20,19 @@ pub struct EguiCtx(pub egui::Context);
 #[derive(Resource, Default)]
 pub struct LastSize(pub egui::Vec2);
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub struct UiState {
     pub render_triangle: bool,
     pub render_model: bool,
+}
+
+impl Default for UiState {
+    fn default() -> Self {
+        Self {
+            render_triangle: false,
+            render_model: true,
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -106,13 +115,14 @@ pub fn ui_system(mut ui_params: UiSystemParams) {
         ui.separator();
 
         for model_info in &ui_params.available_models.models {
-            if ui.button(&model_info.name).clicked() {
+            if ui.button(format!("Spawn {}", model_info.name)).clicked() {
                 let translation = ui_params.spawner_state.position;
                 ui_params.commands.spawn((
                     Model {
                         mesh_name: model_info.name.clone(),
                     },
                     Transform::from_translation(translation),
+                    GlobalTransform::default(),
                 ));
             }
         }
