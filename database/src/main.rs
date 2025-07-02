@@ -31,6 +31,10 @@ impl ModelDatabase {
                 .into_iter()
                 .filter_map(|e| e.ok())
             {
+                if !entry.file_type().is_file() {
+                    continue;
+                }
+
                 let path = entry.path();
                 let extension = path.extension().and_then(|s| s.to_str());
                 let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or_default();
@@ -49,8 +53,11 @@ impl ModelDatabase {
                             vec![
                                 PostProcess::Triangulate,
                                 PostProcess::JoinIdenticalVertices,
+                                PostProcess::GenerateSmoothNormals,
                             ],
                         )?;
+
+                        let mut new_textures_to_add = Vec::new();
 
                         let meshes = scene
                             .meshes
@@ -59,22 +66,59 @@ impl ModelDatabase {
                             .map(|(i, mesh)| {
                                 let material = &scene.materials[mesh.material_index as usize];
                                 let mut texture_name = None;
-                                for prop in &material.properties {
-                                    if prop.key == "$tex.file" && prop.semantic == TextureType::Diffuse {
-                                        if let russimp::material::PropertyTypeInfo::String(path) = &prop.data {
-                                            texture_name = Path::new(path).file_name().and_then(|s| s.to_str()).map(String::from);
+                                let unique_mesh_name = format!("{}-mesh-{}", model_name, i);
+
+                                // Correctly look for textures in the material's texture map.
+                                // Prioritize Diffuse, fallback to Emissive.
+                                let texture_to_use = material.textures.get(&TextureType::Diffuse)
+                                    .or_else(|| material.textures.get(&TextureType::Emissive));
+
+                                if let Some(texture_ref) = texture_to_use {
+                                    let texture = texture_ref.borrow();
+                                    // The texture.data field is an enum. We need to handle its variants.
+                                    match &texture.data {
+                                        russimp::material::DataContent::Bytes(bytes) => {
+                                            // This is the compressed data (e.g., a full PNG file in memory).
+                                            let texture_type_str = if material.textures.contains_key(&TextureType::Diffuse) { "diffuse" } else { "emissive" };
+                                            let new_name = format!("{}_{}.png", unique_mesh_name, texture_type_str);
+        
+                                            new_textures_to_add.push((new_name.clone(), bytes.clone()));
+                                            texture_name = Some(new_name);
+                                        },
+                                        russimp::material::DataContent::Texel(_) => {
+                                            warn!("Found uncompressed texel data for model '{}'. This is not currently supported for embedded textures.", model_name);
+                                        }
+                                    }
+                                } else {
+                                    // If no embedded texture, check properties for a file path. This handles older formats.
+                                    for prop in &material.properties {
+                                        if prop.key.contains("$tex.file") {
+                                            if let russimp::material::PropertyTypeInfo::String(path) = &prop.data {
+                                                texture_name = Path::new(path).file_name().and_then(|s| s.to_str()).map(String::from);
+                                                if texture_name.is_some() {
+                                                    break;
+                                                }
+                                            }
                                         }
                                     }
                                 }
 
-                                let unique_mesh_name = format!("{}-mesh-{}", model_name, i);
+                                info!("[DB] Mesh: '{}' -> Found texture: {:?}", unique_mesh_name, texture_name);
+
                                 let vertices: Vec<types::Vertex> = mesh
                                     .vertices
                                     .into_iter()
-                                    .map(|v| types::Vertex {
+                                    .zip(mesh.normals.into_iter())
+                                    .zip(
+                                        mesh.texture_coords[0]
+                                            .clone()
+                                            .unwrap_or_default()
+                                            .into_iter(),
+                                    )
+                                    .map(|((v, n), uv)| types::Vertex {
                                         position: glam::vec3(v.x, v.y, v.z),
-                                        normal: glam::Vec3::ZERO, // Placeholder
-                                        uv: glam::Vec2::ZERO,     // Placeholder
+                                        normal: glam::vec3(n.x, n.y, n.z),
+                                        uv: glam::vec2(uv.x, uv.y),
                                     })
                                     .collect();
                                 let indices: Vec<u32> =
@@ -87,6 +131,10 @@ impl ModelDatabase {
                                 }
                             })
                             .collect();
+
+                        for (name, data) in new_textures_to_add {
+                            texture_table.insert(name.as_str(), data.as_slice())?;
+                        }
 
                         let model = Model {
                             name: model_name.to_string(),

@@ -11,7 +11,7 @@ var<uniform> camera: Camera;
 struct Vertex {
     position: vec4<f32>,
     normal: vec3<f32>,
-    uv: vec2<f32>,
+    tex_coords: vec2<f32>,
 };
 struct Index {
     i: u32,
@@ -72,7 +72,7 @@ fn vs_main(
 
     var out: VertexOutput;
     out.clip_position = camera.view_proj * world_position;
-    out.uv = vertex.uv;
+    out.uv = vertex.tex_coords;
     out.texture_array_index = instance.texture_array_index;
     return out;
 }

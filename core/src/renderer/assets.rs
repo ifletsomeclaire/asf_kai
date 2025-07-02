@@ -136,7 +136,7 @@ impl AssetServer {
         // Init Texture Pool
         const TEXTURE_ARRAY_SIZE: u32 = 256;
         const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
-        const TEXTURE_DIMENSION: u32 = 1024;
+        const TEXTURE_DIMENSION: u32 = 512;
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("global_texture_array"),
             size: wgpu::Extent3d {
@@ -245,8 +245,11 @@ impl AssetServer {
         image: &DynamicImage,
         queue: &wgpu::Queue,
     ) -> Option<TextureHandle> {
-        let texture_data = image.to_rgba8();
-        let dimensions = image.dimensions();
+        // Resize all images to a standard 512x512 for consistency in the texture array.
+        let resized_image = image.resize_exact(512, 512, image::imageops::FilterType::Lanczos3);
+
+        let texture_data = resized_image.to_rgba8();
+        let dimensions = resized_image.dimensions();
 
         let texture_extent = wgpu::Extent3d {
             width: dimensions.0,

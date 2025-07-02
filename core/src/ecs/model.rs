@@ -95,12 +95,17 @@ pub fn load_models_from_db_system(
     let db = Database::open(&db_path)?;
     let read_txn = db.begin_read()?;
     
-    // Load texture
+    // --- Load ALL textures from the database ---
     let texture_table = read_txn.open_table(TEXTURE_TABLE)?;
-    let texture_bytes = texture_table.get(TEXTURE_NAME)?.unwrap();
-    let texture_image = image::load_from_memory(texture_bytes.value())?;
-    let texture_handle = asset_server.load_texture(&texture_image, &queue.0).unwrap();
-    asset_server.register_texture_handle(TEXTURE_NAME, texture_handle);
+    for result in texture_table.range::<&str>(..)? {
+        let (key, value) = result?;
+        let texture_name = key.value();
+        let texture_bytes = value.value();
+        let texture_image = image::load_from_memory(texture_bytes)?;
+        let texture_handle = asset_server.load_texture(&texture_image, &queue.0).unwrap();
+        info!("[CORE] Loaded texture '{}' from DB.", texture_name);
+        asset_server.register_texture_handle(texture_name, texture_handle);
+    }
 
     // Load all models and populate AvailableModels
     let model_table = read_txn.open_table(MODEL_TABLE)?;
@@ -117,8 +122,11 @@ pub fn load_models_from_db_system(
             
             let texture_handle = if let Some(texture_name) = &cpu_mesh.texture_name {
                 // If the texture isn't in the DB, this will fail. For now, we just won't assign one.
-                asset_server.get_texture_handle(texture_name).cloned()
+                let handle = asset_server.get_texture_handle(texture_name).cloned();
+                info!("[CORE] Mesh '{}' requests texture '{}'. Handle found: {}", cpu_mesh.name, texture_name, handle.is_some());
+                handle
             } else {
+                info!("Mesh '{}' has no texture.", cpu_mesh.name);
                 None
             };
 
@@ -194,11 +202,15 @@ pub fn prepare_scene_data_system(
 
         let texture_array_index = if let Some(handle) = &model.texture_handle {
             if let Some(gpu_texture) = asset_server.get_gpu_texture(handle) {
-                gpu_texture.texture_array_index
+                let index = gpu_texture.texture_array_index;
+                info!("[CORE] Model '{}' -> Texture Index: {}", model.mesh_name, index);
+                index
             } else {
+                warn!("[CORE] Model '{}' has a texture handle but NO GpuTexture!", model.mesh_name);
                 u32::MAX // Sentinel for no texture
             }
         } else {
+            info!("[CORE] Model '{}' has no texture handle.", model.mesh_name);
             u32::MAX // Sentinel for no texture
         };
 
