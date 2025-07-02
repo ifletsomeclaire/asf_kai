@@ -1,20 +1,18 @@
 use bevy_ecs::prelude::*;
 use bevy_ecs::{event::Events, schedule::ScheduleLabel};
-use eframe::{
-    egui::{self},
-};
-use std::sync::Arc;
 use bevy_transform::{
     components::{GlobalTransform, Transform},
     systems::{mark_dirty_trees, propagate_parent_transforms, sync_simple_transforms},
 };
+use eframe::egui::{self};
+use std::sync::Arc;
 
 use crate::{
     config::Config,
     ecs::{
-        camera::{camera_control_system, Camera, OrbitCamera, setup_camera_transform_system},
+        camera::{Camera, OrbitCamera, camera_control_system, setup_camera_transform_system},
         framerate::{FrameRate, frame_rate_system},
-        input::{keyboard_input_system, Input},
+        input::{Input, keyboard_input_system},
         model::{
             load_models_from_db_system, prepare_scene_data_system,
             process_asset_deallocations_system,
@@ -23,10 +21,10 @@ use crate::{
     },
     renderer::{
         assets::AssetServer,
-        core::{initialize_renderer, WgpuDevice, WgpuQueue, WgpuRenderState},
+        core::{WgpuDevice, WgpuQueue, WgpuRenderState, initialize_renderer},
         d3_pipeline::{
-            render_d3_pipeline_system, setup_d3_pipeline_system, update_camera_buffer_system,
-            setup_depth_texture_system,
+            render_d3_pipeline_system, setup_d3_pipeline_system, setup_depth_texture_system,
+            update_camera_buffer_system,
         },
         events::ResizeEvent,
         tonemapping_pass::{
@@ -125,14 +123,7 @@ impl Custom3d {
         ));
 
         let mut schedule = Schedule::default();
-        schedule.add_systems(
-            (
-                keyboard_input_system,
-                ui_system,
-                frame_rate_system,
-            )
-                .chain(),
-        );
+        schedule.add_systems((keyboard_input_system, ui_system, frame_rate_system).chain());
         schedule.add_systems(
             (
                 sync_simple_transforms,
@@ -149,13 +140,8 @@ impl Custom3d {
             )
                 .chain(),
         );
-        schedule.add_systems(
-            (
-                resize_hdr_texture_system,
-                update_camera_aspect_ratio_system,
-            )
-                .chain(),
-        );
+        schedule
+            .add_systems((resize_hdr_texture_system, update_camera_aspect_ratio_system).chain());
         schedule.add_systems(
             (
                 clear_hdr_texture_system,

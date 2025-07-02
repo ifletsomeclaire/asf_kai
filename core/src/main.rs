@@ -18,7 +18,6 @@ fn main() -> eframe::Result<()> {
         vsync: config.vsync,
         wgpu_options: WgpuConfiguration {
             wgpu_setup: eframe::egui_wgpu::WgpuSetup::CreateNew(WgpuSetupCreateNew {
-              
                 device_descriptor: Arc::new(|adapter| {
                     let base_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
                         wgpu::Limits::downlevel_webgl2_defaults()
@@ -30,8 +29,7 @@ fn main() -> eframe::Result<()> {
                         label: Some("egui wgpu device"),
                         required_features: wgpu::Features {
                             features_webgpu: FeaturesWebGPU::default(),
-                            features_wgpu: 
-                               FeaturesWGPU::PUSH_CONSTANTS,
+                            features_wgpu: FeaturesWGPU::PUSH_CONSTANTS,
                         },
                         required_limits: wgpu::Limits {
                             // When using a depth buffer, we have to be able to create a texture

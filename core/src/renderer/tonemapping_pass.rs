@@ -1,15 +1,12 @@
+use crate::renderer::{
+        core::{HDR_FORMAT, WgpuDevice, WgpuQueue, WgpuRenderState},
+        d3_pipeline::{DEPTH_FORMAT, DepthTexture},
+        events::ResizeEvent,
+    };
+use bevy_derive::{Deref, DerefMut};
 use bevy_ecs::{event::EventReader, prelude::*};
 use eframe::egui_wgpu::{self, CallbackTrait, wgpu};
 use std::sync::Arc;
-use crate::{
-    app::InitialSize,
-    renderer::{
-        core::{WgpuDevice, HDR_FORMAT, WgpuQueue, WgpuRenderState},
-        d3_pipeline::{DepthTexture, DEPTH_FORMAT},
-        events::ResizeEvent,
-    },
-};
-use bevy_derive::{Deref, DerefMut};
 
 #[derive(Resource, Clone)]
 pub struct TonemappingPass {
@@ -60,7 +57,7 @@ pub fn resize_hdr_texture_system(
     device: Res<WgpuDevice>,
     tonemapping_pass: Res<TonemappingPass>,
     wgpu_render_state: Res<WgpuRenderState>,
-    mut hdr_texture: ResMut<HdrTexture>,
+    hdr_texture: ResMut<HdrTexture>,
     mut depth_texture: ResMut<DepthTexture>,
 ) {
     for event in resize_events.read() {
@@ -105,7 +102,9 @@ pub fn resize_hdr_texture_system(
             view_formats: &[DEPTH_FORMAT],
         });
         depth_texture.texture = depth_texture_inner;
-        depth_texture.view = depth_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        depth_texture.view = depth_texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         // Create new bind group
         let tonemap_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -256,9 +255,11 @@ pub fn clear_hdr_texture_system(
     queue: Res<WgpuQueue>,
     hdr_texture: Res<HdrTexture>,
 ) {
-    let mut encoder = device.0.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("clear_hdr_texture_encoder"),
-    });
+    let mut encoder = device
+        .0
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("clear_hdr_texture_encoder"),
+        });
     encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("clear_hdr_texture_pass"),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {

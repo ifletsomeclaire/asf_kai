@@ -1,7 +1,7 @@
-use bevy_ecs::prelude::Resource;
-use std::sync::Arc;
 use crate::renderer::assets::AssetServer;
+use bevy_ecs::prelude::Resource;
 use bevy_ecs::world::World;
+use std::sync::Arc;
 
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 

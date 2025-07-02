@@ -1,13 +1,13 @@
 use bevy_ecs::prelude::*;
+use bevy_transform::components::GlobalTransform;
 use std::num::NonZeroU64;
 use wgpu::util::DeviceExt;
-use bevy_transform::components::GlobalTransform;
 
-use super::{core::{HDR_FORMAT, WgpuDevice, WgpuQueue}, tonemapping_pass::{HdrTexture, resize_hdr_texture_system}};
-use crate::{ecs::{
-    camera::Camera,
-    model::PerFrameSceneData,
-}, renderer::events::ResizeEvent};
+use super::{
+    core::{HDR_FORMAT, WgpuDevice, WgpuQueue},
+    tonemapping_pass::HdrTexture,
+};
+use crate::ecs::{camera::Camera, model::PerFrameSceneData};
 
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
@@ -40,7 +40,9 @@ pub fn setup_d3_pipeline_system(mut commands: Commands, device_res: Res<WgpuDevi
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: Some(NonZeroU64::new(std::mem::size_of::<[f32; 16]>() as u64).unwrap()),
+                    min_binding_size: Some(
+                        NonZeroU64::new(std::mem::size_of::<[f32; 16]>() as u64).unwrap(),
+                    ),
                 },
                 count: None,
             }],
@@ -163,7 +165,11 @@ pub fn setup_d3_pipeline_system(mut commands: Commands, device_res: Res<WgpuDevi
     });
 }
 
-pub fn setup_depth_texture_system(mut commands: Commands, device: Res<WgpuDevice>, hdr_texture: Res<HdrTexture>) {
+pub fn setup_depth_texture_system(
+    mut commands: Commands,
+    device: Res<WgpuDevice>,
+    hdr_texture: Res<HdrTexture>,
+) {
     let size = hdr_texture.size;
     let desc = wgpu::TextureDescriptor {
         label: Some("depth_texture"),
@@ -194,11 +200,13 @@ pub fn update_camera_buffer_system(
         let view = transform.compute_matrix().inverse();
         let view_proj = proj * view;
 
-        let uniform_buffer = device.0.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("camera_uniform_buffer"),
-            contents: bytemuck::cast_slice(view_proj.as_ref()),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let uniform_buffer = device
+            .0
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("camera_uniform_buffer"),
+                contents: bytemuck::cast_slice(view_proj.as_ref()),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
 
         let bind_group = device.0.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("camera_bind_group"),
@@ -236,11 +244,16 @@ pub fn render_d3_pipeline_system(
     let camera_bind_group = camera_bind_group.unwrap();
 
     println!("  - Scene data and camera bind group are present.");
-    println!("  - Total vertices to draw: {}", scene_data.total_vertices_to_draw);
+    println!(
+        "  - Total vertices to draw: {}",
+        scene_data.total_vertices_to_draw
+    );
 
-    let mut encoder = _device.0.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("3d_render_encoder"),
-    });
+    let mut encoder = _device
+        .0
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("3d_render_encoder"),
+        });
 
     {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -275,4 +288,4 @@ pub fn render_d3_pipeline_system(
     println!("  - Submitting command encoder.");
     _queue.0.submit(Some(encoder.finish()));
     println!("--- Finished render_d3_pipeline_system ---");
-} 
+}

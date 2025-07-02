@@ -7,8 +7,8 @@
  * and using `bevy_ecs` instead of the full `bevy` crate.
  */
 
-use bevy_ecs::prelude::*;
 use bevy_derive::{Deref, DerefMut};
+use bevy_ecs::prelude::*;
 use std::sync::Arc;
 
 // --- 1. Define the individual asset types ---
@@ -53,10 +53,7 @@ pub enum Asset {
 pub type AssetHandle = Arc<Asset>;
 
 #[derive(Component, Deref, DerefMut)]
-pub struct Handle<T: 'static>(
-    #[deref] pub AssetHandle,
-    std::marker::PhantomData<T>,
-);
+pub struct Handle<T: 'static>(#[deref] pub AssetHandle, std::marker::PhantomData<T>);
 
 impl<T> Clone for Handle<T> {
     fn clone(&self) -> Self {
@@ -150,4 +147,4 @@ fn asset_handle_rc_should_drop_when_entity_is_despawned() {
     println!("\n[CLEANUP] Test scope is ending. Original handles will be dropped now.");
     // The test function now drops `player_texture` and `player_mesh`.
     // The ref count will go to 0, and the `Drop` impl on `Texture` and `Mesh` will run.
-} 
+}

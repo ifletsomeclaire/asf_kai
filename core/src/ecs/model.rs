@@ -1,22 +1,22 @@
-use bevy_ecs::prelude::*;
-use bytemuck::{Pod, Zeroable};
-use redb::{Database, TableDefinition};
-use std::env;
-use std::path::PathBuf;
-use types::Model as TypesModel;
-use wgpu::util::DeviceExt;
-use bevy_transform::components::GlobalTransform;
-use indexmap::IndexMap;
-use crate::renderer::assets::{AssetServer, MeshHandle, TextureHandle, GpuMesh, GpuTexture, DeallocationMessage};
+use crate::renderer::assets::{
+    AssetServer, DeallocationMessage, MeshHandle, TextureHandle,
+};
 use crate::renderer::{
     core::{WgpuDevice, WgpuQueue},
     d3_pipeline::D3Pipeline,
 };
-use log::{info, warn};
-use glam::{Vec2, Vec3};
+use bevy_ecs::prelude::*;
+use bevy_transform::components::GlobalTransform;
 use bevy_transform::components::Transform;
-use std::collections::HashMap;
+use bytemuck::{Pod, Zeroable};
 use image;
+use log::{info, warn};
+use redb::{Database, TableDefinition};
+use std::collections::HashMap;
+use std::env;
+use std::path::PathBuf;
+use types::Model as TypesModel;
+use wgpu::util::DeviceExt;
 
 const MODEL_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("models");
 const TEXTURE_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("textures");
@@ -94,7 +94,7 @@ pub fn load_models_from_db_system(
 
     let db = Database::open(&db_path)?;
     let read_txn = db.begin_read()?;
-    
+
     // --- Load ALL textures from the database ---
     let texture_table = read_txn.open_table(TEXTURE_TABLE)?;
     for result in texture_table.range::<&str>(..)? {
@@ -119,11 +119,16 @@ pub fn load_models_from_db_system(
             let (mesh_handle, _) = asset_server.load_mesh(cpu_mesh, &queue.0).unwrap();
             let mesh_name = cpu_mesh.name.clone();
             asset_server.register_mesh_handle(&mesh_name, mesh_handle.clone());
-            
+
             let texture_handle = if let Some(texture_name) = &cpu_mesh.texture_name {
                 // If the texture isn't in the DB, this will fail. For now, we just won't assign one.
                 let handle = asset_server.get_texture_handle(texture_name).cloned();
-                info!("[CORE] Mesh '{}' requests texture '{}'. Handle found: {}", cpu_mesh.name, texture_name, handle.is_some());
+                info!(
+                    "[CORE] Mesh '{}' requests texture '{}'. Handle found: {}",
+                    cpu_mesh.name,
+                    texture_name,
+                    handle.is_some()
+                );
                 handle
             } else {
                 info!("Mesh '{}' has no texture.", cpu_mesh.name);
@@ -158,7 +163,7 @@ pub fn load_models_from_db_system(
             }
         }
     }
-    
+
     println!("--- Finished load_models_from_db_system ---");
     commands.insert_resource(available_models);
 
@@ -203,10 +208,16 @@ pub fn prepare_scene_data_system(
         let texture_array_index = if let Some(handle) = &model.texture_handle {
             if let Some(gpu_texture) = asset_server.get_gpu_texture(handle) {
                 let index = gpu_texture.texture_array_index;
-                info!("[CORE] Model '{}' -> Texture Index: {}", model.mesh_name, index);
+                info!(
+                    "[CORE] Model '{}' -> Texture Index: {}",
+                    model.mesh_name, index
+                );
                 index
             } else {
-                warn!("[CORE] Model '{}' has a texture handle but NO GpuTexture!", model.mesh_name);
+                warn!(
+                    "[CORE] Model '{}' has a texture handle but NO GpuTexture!",
+                    model.mesh_name
+                );
                 u32::MAX // Sentinel for no texture
             }
         } else {
@@ -241,23 +252,29 @@ pub fn prepare_scene_data_system(
         }
     }
 
-    let mesh_description_buffer = device.0.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Per-Frame Mesh Description Buffer"),
-        contents: bytemuck::cast_slice(&mesh_descriptions),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-    
-    let instance_buffer = device.0.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Per-Frame Instance Buffer"),
-        contents: bytemuck::cast_slice(&instances),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
+    let mesh_description_buffer = device
+        .0
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Per-Frame Mesh Description Buffer"),
+            contents: bytemuck::cast_slice(&mesh_descriptions),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
 
-    let instance_lookup_buffer = device.0.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Per-Frame Instance Lookup Buffer"),
-        contents: bytemuck::cast_slice(&instance_lookups),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
+    let instance_buffer = device
+        .0
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Per-Frame Instance Buffer"),
+            contents: bytemuck::cast_slice(&instances),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+    let instance_lookup_buffer = device
+        .0
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Per-Frame Instance Lookup Buffer"),
+            contents: bytemuck::cast_slice(&instance_lookups),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
 
     let mesh_bind_group = device.0.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Mesh Bind Group"),
@@ -294,7 +311,10 @@ pub fn prepare_scene_data_system(
         ],
     });
 
-    commands.insert_resource(PerFrameSceneData { mesh_bind_group, total_vertices_to_draw });
+    commands.insert_resource(PerFrameSceneData {
+        mesh_bind_group,
+        total_vertices_to_draw,
+    });
 }
 
 pub fn process_asset_deallocations_system(mut asset_server: ResMut<AssetServer>) {

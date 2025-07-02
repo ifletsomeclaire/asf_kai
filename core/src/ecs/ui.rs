@@ -11,8 +11,8 @@ use crate::{
     },
     renderer::events::ResizeEvent,
 };
-use bevy_transform::components::{Transform, GlobalTransform};
-use glam::{Quat, Vec3};
+use bevy_transform::components::{GlobalTransform, Transform};
+use glam::Vec3;
 
 #[derive(Resource, Deref)]
 pub struct EguiCtx(pub egui::Context);

@@ -3,9 +3,9 @@ use crossbeam_channel::{Receiver, Sender};
 use image::{DynamicImage, GenericImageView};
 use offset_allocator::{Allocation, Allocator};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use types::{Mesh as CpuMesh};
+use std::sync::atomic::{AtomicU64, Ordering};
+use types::Mesh as CpuMesh;
 
 use crate::ecs::model::Vertex;
 
@@ -88,6 +88,38 @@ struct GpuTexturePool {
 
 // --- The Central Asset Manager ---
 
+/// The `AssetServer` is the central hub for all GPU asset management.
+///
+/// # Design Philosophy
+///
+/// The asset management strategy is built around the "bindless" rendering paradigm.
+/// Instead of binding individual buffers and textures for each draw call, this `AssetServer`
+/// uploads all assets of a certain type into large, contiguous GPU buffers.
+///
+/// - **Meshes**: All vertex and index data is stored in two massive `wgpu::Buffer`s
+///   (one for vertices, one for indices). The `GpuMeshPool` uses an `offset_allocator`
+///   to sub-allocate chunks of these buffers for individual meshes. When a mesh is rendered,
+///   the shader can access its data using `first_vertex` and `first_index` offsets.
+///
+/// - **Textures**: All 2D textures are loaded into a single `wgpu::Texture` array. Each
+///   texture is assigned a layer in this array. Shaders can then select the appropriate
+///   texture using a texture array index.
+///
+/// # Key Components
+///
+/// - `GpuMeshPool`: Owns the global vertex and index buffers and their respective allocators.
+/// - `GpuTexturePool`: Owns the global texture array and manages free slots.
+/// - `MeshHandle` / `TextureHandle`: Lightweight, copyable handles that provide access to
+///   the underlying GPU assets.
+/// - **Automatic Deallocation**: `MeshHandle` is an `Arc`-based handle. When the last reference
+///   to a `MeshHandle` is dropped, its `Drop` implementation automatically sends a
+///   `DeallocationMessage` through a `crossbeam_channel`. A dedicated system is responsible
+///   for receiving these messages and freeing the corresponding sub-allocations in the GPU pools.
+///   This automates GPU memory management, preventing leaks.
+/// - `meshes` and `textures` HashMaps: Store metadata (`GpuMesh`, `GpuTexture`) for each asset,
+///   keyed by their handle ID. This metadata provides the necessary offsets and counts for rendering.
+/// - `*_name_to_handle` HashMaps: Provide a way to look up asset handles by a string name,
+///   which is useful for scene setup and associating models with their assets.
 #[derive(Resource)]
 pub struct AssetServer {
     pub mesh_pool: GpuMeshPool,
@@ -117,13 +149,17 @@ impl AssetServer {
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("global_vertex_buffer"),
             size: VERTEX_BUFFER_SIZE as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
+            usage: wgpu::BufferUsages::VERTEX
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
         let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("global_index_buffer"),
             size: INDEX_BUFFER_SIZE as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
+            usage: wgpu::BufferUsages::INDEX
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
         let mesh_pool = GpuMeshPool {
@@ -302,7 +338,8 @@ impl AssetServer {
     }
 
     pub fn register_mesh_handle(&mut self, mesh_name: &str, handle: MeshHandle) {
-        self.mesh_name_to_handle.insert(mesh_name.to_string(), handle);
+        self.mesh_name_to_handle
+            .insert(mesh_name.to_string(), handle);
     }
 
     pub fn get_texture_handle(&self, texture_name: &str) -> Option<&TextureHandle> {
@@ -329,4 +366,4 @@ impl AssetServer {
     pub fn get_texture_sampler(&self) -> &wgpu::Sampler {
         &self.texture_pool.sampler
     }
-} 
+}

@@ -27,17 +27,17 @@ impl ModelDatabase {
         {
             let mut model_table = write_txn.open_table(MODEL_TABLE)?;
             let mut texture_table = write_txn.open_table(TEXTURE_TABLE)?;
-            for entry in WalkDir::new(assets_dir)
-                .into_iter()
-                .filter_map(|e| e.ok())
-            {
+            for entry in WalkDir::new(assets_dir).into_iter().filter_map(|e| e.ok()) {
                 if !entry.file_type().is_file() {
                     continue;
                 }
 
                 let path = entry.path();
                 let extension = path.extension().and_then(|s| s.to_str());
-                let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or_default();
+                let file_name = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_default();
 
                 match extension {
                     Some("gltf") | Some("glb") => {
@@ -81,7 +81,7 @@ impl ModelDatabase {
                                             // This is the compressed data (e.g., a full PNG file in memory).
                                             let texture_type_str = if material.textures.contains_key(&TextureType::Diffuse) { "diffuse" } else { "emissive" };
                                             let new_name = format!("{}_{}.png", unique_mesh_name, texture_type_str);
-        
+
                                             new_textures_to_add.push((new_name.clone(), bytes.clone()));
                                             texture_name = Some(new_name);
                                         },
@@ -189,7 +189,10 @@ fn main() -> Result<(), anyhow::Error> {
 
     // Example of retrieving a model
     if let Some(model) = db.get_model("cube")? {
-        info!("Successfully retrieved model 'cube' with {} meshes.", model.meshes.len());
+        info!(
+            "Successfully retrieved model 'cube' with {} meshes.",
+            model.meshes.len()
+        );
         for mesh in &model.meshes {
             info!("    - Mesh: {}", mesh.name);
             info!("      - Vertices: {}", mesh.vertices.len());
