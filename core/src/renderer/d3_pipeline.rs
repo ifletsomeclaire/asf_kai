@@ -100,6 +100,22 @@ pub fn setup_d3_pipeline_system(mut commands: Commands, device_res: Res<WgpuDevi
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
 
@@ -162,28 +178,6 @@ pub fn setup_depth_texture_system(mut commands: Commands, device: Res<WgpuDevice
     let texture = device.0.create_texture(&desc);
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     commands.insert_resource(DepthTexture { texture, view });
-}
-
-pub fn resize_depth_texture_system(
-    mut events: EventReader<ResizeEvent>,
-    device: Res<WgpuDevice>,
-    mut depth_texture: ResMut<DepthTexture>,
-) {
-    for event in events.read() {
-        let size = event.0;
-        let desc = wgpu::TextureDescriptor {
-            label: Some("depth_texture"),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[DEPTH_FORMAT],
-        };
-        depth_texture.texture = device.0.create_texture(&desc);
-        depth_texture.view = depth_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
-    }
 }
 
 #[derive(Resource)]

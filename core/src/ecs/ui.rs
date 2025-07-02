@@ -59,6 +59,7 @@ pub struct UiSystemParams<'w, 's> {
     commands: Commands<'w, 's>,
     available_models: Res<'w, AvailableModels>,
     spawner_state: ResMut<'w, SpawnerState>,
+    model_query: Query<'w, 's, Entity, With<Model>>,
 }
 
 pub fn ui_system(mut ui_params: UiSystemParams) {
@@ -76,7 +77,11 @@ pub fn ui_system(mut ui_params: UiSystemParams) {
             }));
         }
 
-        ui.interact(rect, ui.id().with("3d_view"), egui::Sense::drag());
+        ui.interact(
+            rect,
+            ui.id().with("3d_view"),
+            egui::Sense::drag().union(egui::Sense::hover()),
+        );
 
         let callback = eframe::egui_wgpu::Callback::new_paint_callback(
             rect,
@@ -120,10 +125,20 @@ pub fn ui_system(mut ui_params: UiSystemParams) {
                 ui_params.commands.spawn((
                     Model {
                         mesh_name: model_info.name.clone(),
+                        mesh_handle: model_info.mesh_handle.clone(),
+                        texture_handle: model_info.texture_handle.clone(),
                     },
                     Transform::from_translation(translation),
                     GlobalTransform::default(),
                 ));
+            }
+        }
+
+        ui.separator();
+
+        if ui.button("Despawn Last").clicked() {
+            if let Some(entity) = ui_params.model_query.iter().last() {
+                ui_params.commands.entity(entity).despawn();
             }
         }
     });

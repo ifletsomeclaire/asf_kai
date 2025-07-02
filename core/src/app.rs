@@ -15,7 +15,10 @@ use crate::{
         camera::{camera_control_system, Camera, OrbitCamera, setup_camera_transform_system},
         framerate::{FrameRate, frame_rate_system},
         input::{keyboard_input_system, Input},
-        model::{load_models_from_db_system, prepare_scene_data_system},
+        model::{
+            load_models_from_db_system, prepare_scene_data_system,
+            process_asset_deallocations_system,
+        },
         ui::{EguiCtx, LastSize, SpawnerState, UiState, ui_system},
     },
     renderer::{
@@ -23,7 +26,7 @@ use crate::{
         core::{initialize_renderer, WgpuDevice, WgpuQueue, WgpuRenderState},
         d3_pipeline::{
             render_d3_pipeline_system, setup_d3_pipeline_system, update_camera_buffer_system,
-            setup_depth_texture_system, resize_depth_texture_system,
+            setup_depth_texture_system,
         },
         events::ResizeEvent,
         tonemapping_pass::{
@@ -149,7 +152,6 @@ impl Custom3d {
         schedule.add_systems(
             (
                 resize_hdr_texture_system,
-                resize_depth_texture_system,
                 update_camera_aspect_ratio_system,
             )
                 .chain(),
@@ -159,6 +161,7 @@ impl Custom3d {
                 clear_hdr_texture_system,
                 render_triangle_system.run_if(|ui_state: Res<UiState>| ui_state.render_triangle),
                 render_d3_pipeline_system.run_if(|ui_state: Res<UiState>| ui_state.render_model),
+                process_asset_deallocations_system,
             )
                 .chain(),
         );

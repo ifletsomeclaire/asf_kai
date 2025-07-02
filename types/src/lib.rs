@@ -14,6 +14,7 @@ pub struct Mesh {
     pub name: String,
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
+    pub texture_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

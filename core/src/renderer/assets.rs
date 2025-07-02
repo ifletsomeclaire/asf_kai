@@ -1,27 +1,51 @@
 use bevy_ecs::prelude::{Component, Resource};
+use crossbeam_channel::{Receiver, Sender};
+use image::{DynamicImage, GenericImageView};
 use offset_allocator::{Allocation, Allocator};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use types::{Mesh as CpuMesh};
-use uuid::Uuid;
-use wgpu::util::DeviceExt;
 
 use crate::ecs::model::Vertex;
 
-// --- Handle IDs ---
-// This is the public API for referencing an asset. It's a lightweight, copyable handle.
-
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Handle<T> {
-    pub id: Uuid,
-    _phantom: std::marker::PhantomData<T>,
+pub enum DeallocationMessage {
+    Mesh(Allocation, Allocation), // Vertex and Index allocations
+                                  // Texture(u32), // Texture array index
 }
 
-impl<T> Handle<T> {
-    fn new() -> Self {
-        Self {
-            id: Uuid::new_v4(),
-            _phantom: std::marker::PhantomData,
-        }
+// --- Handle IDs ---
+
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TextureHandle(u64);
+
+struct GpuMeshHandleInner {
+    id: u64,
+    vertex_alloc: Allocation,
+    index_alloc: Allocation,
+    deallocator: Sender<DeallocationMessage>,
+}
+
+impl Drop for GpuMeshHandleInner {
+    fn drop(&mut self) {
+        // This is it! When the last Arc is dropped, this code runs.
+        // We send the allocations to the AssetServer for freeing.
+        // The `send` might fail if the receiver is already dropped, which is fine.
+        let _ = self.deallocator.send(DeallocationMessage::Mesh(
+            self.vertex_alloc.clone(), // Allocation is cheap to clone
+            self.index_alloc.clone(),
+        ));
+    }
+}
+
+#[derive(Component, Clone)]
+pub struct MeshHandle {
+    inner: Arc<GpuMeshHandleInner>,
+}
+
+impl MeshHandle {
+    pub fn id(&self) -> u64 {
+        self.inner.id
     }
 }
 
@@ -47,11 +71,11 @@ pub struct GpuMesh {
 
 // --- Core GPU Resource Pools ---
 
-struct GpuMeshPool {
+pub struct GpuMeshPool {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
-    vertex_allocator: Allocator,
-    index_allocator: Allocator,
+    pub vertex_allocator: Allocator,
+    pub index_allocator: Allocator,
 }
 
 struct GpuTexturePool {
@@ -66,22 +90,27 @@ struct GpuTexturePool {
 
 #[derive(Resource)]
 pub struct AssetServer {
-    mesh_pool: GpuMeshPool,
+    pub mesh_pool: GpuMeshPool,
     texture_pool: GpuTexturePool,
 
+    deallocation_sender: Sender<DeallocationMessage>,
+    pub deallocation_receiver: Receiver<DeallocationMessage>,
+
+    next_mesh_id: AtomicU64,
+    next_texture_id: AtomicU64,
+
     // Central storage for all asset metadata.
-    pub meshes: HashMap<Handle<GpuMesh>, (GpuMesh, Allocation, Allocation)>,
-    pub textures: HashMap<Handle<GpuTexture>, GpuTexture>,
+    pub meshes: HashMap<u64, GpuMesh>,
+    pub textures: HashMap<TextureHandle, GpuTexture>,
 
-    // Reference counting to track how many entities use a given asset.
-    mesh_ref_counts: HashMap<Handle<GpuMesh>, u32>,
-    texture_ref_counts: HashMap<Handle<GpuTexture>, u32>,
-
-    mesh_name_to_handle: HashMap<String, Handle<GpuMesh>>,
+    mesh_name_to_handle: HashMap<String, MeshHandle>,
+    texture_name_to_handle: HashMap<String, TextureHandle>,
 }
 
 impl AssetServer {
     pub fn new(device: &wgpu::Device) -> Self {
+        let (sender, receiver) = crossbeam_channel::unbounded();
+
         // Init Mesh Pool
         const VERTEX_BUFFER_SIZE: u32 = 1024 * 1024 * 128; // 128 MB
         const INDEX_BUFFER_SIZE: u32 = 1024 * 1024 * 64; // 64 MB
@@ -134,31 +163,70 @@ impl AssetServer {
         Self {
             mesh_pool,
             texture_pool,
+            deallocation_sender: sender,
+            deallocation_receiver: receiver,
             meshes: HashMap::new(),
             textures: HashMap::new(),
-            mesh_ref_counts: HashMap::new(),
-            texture_ref_counts: HashMap::new(),
             mesh_name_to_handle: HashMap::new(),
+            texture_name_to_handle: HashMap::new(),
+            next_mesh_id: AtomicU64::new(0),
+            next_texture_id: AtomicU64::new(0),
         }
     }
 
-    pub fn load_mesh(&mut self, cpu_mesh: &CpuMesh, queue: &wgpu::Queue) -> Option<Handle<GpuMesh>> {
-        let vertices_with_padding: Vec<Vertex> = cpu_mesh.vertices.iter().map(|v| {
-            Vertex {
+    pub fn load_mesh(
+        &mut self,
+        cpu_mesh: &CpuMesh,
+        queue: &wgpu::Queue,
+    ) -> Option<(MeshHandle, GpuMesh)> {
+        let vertices_with_padding: Vec<Vertex> = cpu_mesh
+            .vertices
+            .iter()
+            .map(|v| Vertex {
                 position: [v.position.x, v.position.y, v.position.z, 1.0],
-            }
-        }).collect();
+                normal: [v.normal.x, v.normal.y, v.normal.z],
+                _padding1: 0,
+                tex_coords: [v.uv.x, v.uv.y],
+                _padding2: [0; 2],
+            })
+            .collect();
 
         let vertex_data = bytemuck::cast_slice(&vertices_with_padding);
         let index_data = bytemuck::cast_slice(&cpu_mesh.indices);
 
-        let vertex_alloc = self.mesh_pool.vertex_allocator.allocate(vertex_data.len() as u32)?;
-        let index_alloc = self.mesh_pool.index_allocator.allocate(index_data.len() as u32)?;
+        let vertex_alloc = self
+            .mesh_pool
+            .vertex_allocator
+            .allocate(vertex_data.len() as u32)?;
+        let index_alloc = self
+            .mesh_pool
+            .index_allocator
+            .allocate(index_data.len() as u32)?;
 
-        queue.write_buffer(&self.mesh_pool.vertex_buffer, vertex_alloc.offset.into(), vertex_data);
-        queue.write_buffer(&self.mesh_pool.index_buffer, index_alloc.offset.into(), index_data);
+        queue.write_buffer(
+            &self.mesh_pool.vertex_buffer,
+            vertex_alloc.offset.into(),
+            vertex_data,
+        );
+        queue.write_buffer(
+            &self.mesh_pool.index_buffer,
+            index_alloc.offset.into(),
+            index_data,
+        );
 
-        let handle = Handle::<GpuMesh>::new();
+        let id = self.next_mesh_id.fetch_add(1, Ordering::Relaxed);
+
+        let handle_inner = GpuMeshHandleInner {
+            id,
+            vertex_alloc: vertex_alloc.clone(),
+            index_alloc: index_alloc.clone(),
+            deallocator: self.deallocation_sender.clone(),
+        };
+
+        let handle = MeshHandle {
+            inner: Arc::new(handle_inner),
+        };
+
         let gpu_mesh = GpuMesh {
             name: cpu_mesh.name.clone(),
             vertex_buffer_offset: vertex_alloc.offset.into(),
@@ -167,25 +235,55 @@ impl AssetServer {
             index_count: cpu_mesh.indices.len() as u32,
         };
 
-        self.meshes.insert(handle.clone(), (gpu_mesh, vertex_alloc, index_alloc));
-        self.mesh_ref_counts.insert(handle.clone(), 1);
+        self.meshes.insert(id, gpu_mesh.clone());
 
-        Some(handle)
+        Some((handle, gpu_mesh))
     }
 
-    /// Called by a system when an entity with a mesh handle is despawned.
-    pub fn unload_mesh(&mut self, handle: &Handle<GpuMesh>) {
-        if let Some(count) = self.mesh_ref_counts.get_mut(handle) {
-            *count -= 1;
-            if *count == 0 {
-                if let Some((_gpu_mesh, vertex_alloc, index_alloc)) = self.meshes.remove(handle) {
-                    self.mesh_pool.vertex_allocator.free(vertex_alloc);
-                    self.mesh_pool.index_allocator.free(index_alloc);
-                    self.mesh_ref_counts.remove(handle);
-                    println!("Unloaded mesh and freed GPU memory for handle {:?}", handle.id);
-                }
-            }
-        }
+    pub fn load_texture(
+        &mut self,
+        image: &DynamicImage,
+        queue: &wgpu::Queue,
+    ) -> Option<TextureHandle> {
+        let texture_data = image.to_rgba8();
+        let dimensions = image.dimensions();
+
+        let texture_extent = wgpu::Extent3d {
+            width: dimensions.0,
+            height: dimensions.1,
+            depth_or_array_layers: 1,
+        };
+
+        let texture_array_index = self.texture_pool.free_slots.pop()?;
+
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &self.texture_pool.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: 0,
+                    y: 0,
+                    z: texture_array_index,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            &texture_data,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * dimensions.0),
+                rows_per_image: Some(dimensions.1),
+            },
+            texture_extent,
+        );
+
+        let handle = TextureHandle(self.next_texture_id.fetch_add(1, Ordering::Relaxed));
+        let gpu_texture = GpuTexture {
+            texture_array_index,
+        };
+
+        self.textures.insert(handle, gpu_texture);
+
+        Some(handle)
     }
 
     pub fn get_vertex_buffer(&self) -> &wgpu::Buffer {
@@ -196,15 +294,36 @@ impl AssetServer {
         &self.mesh_pool.index_buffer
     }
 
-    pub fn get_mesh_handle(&self, mesh_name: &str) -> Option<&Handle<GpuMesh>> {
+    pub fn get_mesh_handle(&self, mesh_name: &str) -> Option<&MeshHandle> {
         self.mesh_name_to_handle.get(mesh_name)
     }
 
-    pub fn register_mesh_handle(&mut self, mesh_name: &str, handle: Handle<GpuMesh>) {
+    pub fn register_mesh_handle(&mut self, mesh_name: &str, handle: MeshHandle) {
         self.mesh_name_to_handle.insert(mesh_name.to_string(), handle);
     }
 
-    pub fn get_gpu_mesh(&self, handle: &Handle<GpuMesh>) -> Option<&GpuMesh> {
-        self.meshes.get(handle).map(|(gpu_mesh, _, _)| gpu_mesh)
+    pub fn get_texture_handle(&self, texture_name: &str) -> Option<&TextureHandle> {
+        self.texture_name_to_handle.get(texture_name)
+    }
+
+    pub fn register_texture_handle(&mut self, texture_name: &str, handle: TextureHandle) {
+        self.texture_name_to_handle
+            .insert(texture_name.to_string(), handle);
+    }
+
+    pub fn get_gpu_mesh(&self, handle: &MeshHandle) -> Option<&GpuMesh> {
+        self.meshes.get(&handle.id())
+    }
+
+    pub fn get_gpu_texture(&self, handle: &TextureHandle) -> Option<&GpuTexture> {
+        self.textures.get(handle)
+    }
+
+    pub fn get_texture_view(&self) -> &wgpu::TextureView {
+        &self.texture_pool.view
+    }
+
+    pub fn get_texture_sampler(&self) -> &wgpu::Sampler {
+        &self.texture_pool.sampler
     }
 } 

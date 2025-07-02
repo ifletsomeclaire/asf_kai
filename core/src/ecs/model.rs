@@ -7,22 +7,29 @@ use types::Model as TypesModel;
 use wgpu::util::DeviceExt;
 use bevy_transform::components::GlobalTransform;
 use indexmap::IndexMap;
-use crate::renderer::assets::{AssetServer, Handle, GpuMesh};
+use crate::renderer::assets::{AssetServer, MeshHandle, TextureHandle, GpuMesh, GpuTexture, DeallocationMessage};
 use crate::renderer::{
     core::{WgpuDevice, WgpuQueue},
     d3_pipeline::D3Pipeline,
 };
 use log::{info, warn};
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 use bevy_transform::components::Transform;
 use std::collections::HashMap;
+use image;
 
 const MODEL_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("models");
+const TEXTURE_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("textures");
+const TEXTURE_NAME: &str = "StylizedWater.png";
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct Vertex {
     pub position: [f32; 4],
+    pub normal: [f32; 3],
+    pub _padding1: u32,
+    pub tex_coords: [f32; 2],
+    pub _padding2: [u32; 2],
 }
 
 #[repr(C)]
@@ -31,7 +38,6 @@ pub struct MeshDescription {
     pub index_count: u32,
     pub first_index: u32,
     pub base_vertex: i32,
-    pub _padding: u32,
 }
 
 #[repr(C)]
@@ -39,7 +45,8 @@ pub struct MeshDescription {
 struct Instance {
     model_matrix: [[f32; 4]; 4],
     mesh_id: u32,
-    _padding: [u32; 3],
+    texture_array_index: u32,
+    _padding: [u32; 2],
 }
 
 #[repr(C)]
@@ -52,10 +59,14 @@ struct InstanceLookup {
 #[derive(Component, Clone)]
 pub struct Model {
     pub mesh_name: String,
+    pub mesh_handle: MeshHandle,
+    pub texture_handle: Option<TextureHandle>,
 }
 
 pub struct ModelInfo {
     pub name: String,
+    pub mesh_handle: MeshHandle,
+    pub texture_handle: Option<TextureHandle>,
 }
 
 #[derive(Resource, Default)]
@@ -77,33 +88,61 @@ pub fn load_models_from_db_system(
     println!("--- Running load_models_from_db_system ---");
     let mut available_models = AvailableModels::default();
 
-    let mut workspace_root = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
-    workspace_root.pop(); // Go up to the workspace root from the crate root
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().unwrap();
     let db_path = workspace_root.join("assets/models.redb");
 
     let db = Database::open(&db_path)?;
     let read_txn = db.begin_read()?;
-    let table = read_txn.open_table(MODEL_TABLE)?;
+    
+    // Load texture
+    let texture_table = read_txn.open_table(TEXTURE_TABLE)?;
+    let texture_bytes = texture_table.get(TEXTURE_NAME)?.unwrap();
+    let texture_image = image::load_from_memory(texture_bytes.value())?;
+    let texture_handle = asset_server.load_texture(&texture_image, &queue.0).unwrap();
+    asset_server.register_texture_handle(TEXTURE_NAME, texture_handle);
 
     // Load all models and populate AvailableModels
-    for result in table.range::<&str>(..)? {
+    let model_table = read_txn.open_table(MODEL_TABLE)?;
+    for result in model_table.range::<&str>(..)? {
         let (key, value) = result?;
         let filename = key.value().to_string();
-        let model_data = value.value();
-        let model: TypesModel = bincode::deserialize(model_data)?;
+        let model: TypesModel = bincode::deserialize(value.value())?;
 
         // A model can have multiple meshes
         for cpu_mesh in &model.meshes {
-            let handle = asset_server.load_mesh(cpu_mesh, &queue.0).unwrap();
-            asset_server.register_mesh_handle(&cpu_mesh.name, handle);
-            available_models.models.push(ModelInfo { name: cpu_mesh.name.clone() });
+            let (mesh_handle, _) = asset_server.load_mesh(cpu_mesh, &queue.0).unwrap();
+            let mesh_name = cpu_mesh.name.clone();
+            asset_server.register_mesh_handle(&mesh_name, mesh_handle.clone());
+            
+            let texture_handle = if let Some(texture_name) = &cpu_mesh.texture_name {
+                // If the texture isn't in the DB, this will fail. For now, we just won't assign one.
+                asset_server.get_texture_handle(texture_name).cloned()
+            } else {
+                None
+            };
+
+            available_models.models.push(ModelInfo {
+                name: mesh_name,
+                mesh_handle,
+                texture_handle,
+            });
         }
 
         if filename == "cube.gltf" {
             if let Some(mesh) = model.meshes.first() {
+                let mesh_handle = asset_server.get_mesh_handle(&mesh.name).unwrap().clone();
+                let texture_handle = if let Some(texture_name) = &mesh.texture_name {
+                    asset_server.get_texture_handle(texture_name).cloned()
+                } else {
+                    None
+                };
+
                 commands.spawn((
                     Model {
                         mesh_name: mesh.name.clone(),
+                        mesh_handle,
+                        texture_handle,
                     },
                     Transform::default(),
                     GlobalTransform::default(),
@@ -135,26 +174,40 @@ pub fn prepare_scene_data_system(
     let mut instances = Vec::new();
 
     for (model, transform) in query.iter() {
-        if let Some(handle) = asset_server.get_mesh_handle(&model.mesh_name) {
-            let mesh_id = *handle_to_mesh_id.entry(handle.clone()).or_insert_with(|| {
+        let mesh_id = *handle_to_mesh_id
+            .entry(model.mesh_handle.id())
+            .or_insert_with(|| {
                 let id = mesh_descriptions.len() as u32;
-                if let Some(gpu_mesh) = asset_server.get_gpu_mesh(handle) {
+                if let Some(gpu_mesh) = asset_server.get_gpu_mesh(&model.mesh_handle) {
                     mesh_descriptions.push(MeshDescription {
                         index_count: gpu_mesh.index_count,
-                        first_index: (gpu_mesh.index_buffer_offset / std::mem::size_of::<u32>() as u64) as u32,
-                        base_vertex: (gpu_mesh.vertex_buffer_offset / std::mem::size_of::<Vertex>() as u64) as i32,
-                        _padding: 0,
+                        first_index: (gpu_mesh.index_buffer_offset
+                            / std::mem::size_of::<u32>() as u64)
+                            as u32,
+                        base_vertex: (gpu_mesh.vertex_buffer_offset
+                            / std::mem::size_of::<Vertex>() as u64)
+                            as i32,
                     });
                 }
                 id
             });
 
-            instances.push(Instance {
-                model_matrix: transform.compute_matrix().to_cols_array_2d(),
-                mesh_id,
-                _padding: [0; 3],
-            });
-        }
+        let texture_array_index = if let Some(handle) = &model.texture_handle {
+            if let Some(gpu_texture) = asset_server.get_gpu_texture(handle) {
+                gpu_texture.texture_array_index
+            } else {
+                u32::MAX // Sentinel for no texture
+            }
+        } else {
+            u32::MAX // Sentinel for no texture
+        };
+
+        instances.push(Instance {
+            model_matrix: transform.compute_matrix().to_cols_array_2d(),
+            mesh_id,
+            texture_array_index,
+            _padding: [0; 2],
+        });
     }
 
     if instances.is_empty() {
@@ -218,11 +271,28 @@ pub fn prepare_scene_data_system(
                 binding: 4,
                 resource: instance_lookup_buffer.as_entire_binding(),
             },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: wgpu::BindingResource::TextureView(asset_server.get_texture_view()),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: wgpu::BindingResource::Sampler(asset_server.get_texture_sampler()),
+            },
         ],
     });
 
-    commands.insert_resource(PerFrameSceneData {
-        mesh_bind_group,
-        total_vertices_to_draw,
-    });
-} 
+    commands.insert_resource(PerFrameSceneData { mesh_bind_group, total_vertices_to_draw });
+}
+
+pub fn process_asset_deallocations_system(mut asset_server: ResMut<AssetServer>) {
+    while let Ok(message) = asset_server.deallocation_receiver.try_recv() {
+        match message {
+            DeallocationMessage::Mesh(vertex_alloc, index_alloc) => {
+                asset_server.mesh_pool.vertex_allocator.free(vertex_alloc);
+                asset_server.mesh_pool.index_allocator.free(index_alloc);
+                println!("Deallocated a mesh from GPU pool.");
+            }
+        }
+    }
+}
