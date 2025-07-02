@@ -1,0 +1,17 @@
+[package]
+name = "workspace-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+bevy_ecs = { version = "0.16.1" }
+
+# This is needed because the test file defines its own components.
+# In a real scenario, this might depend on the actual crates in the workspace.
+bevy_derive = "0.16.1"
+
+[[test]]
+name = "asset_management"
+path = "asset_management.rs"
+harness = true 

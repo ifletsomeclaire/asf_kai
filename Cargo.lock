@@ -4963,6 +4963,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "workspace-tests"
+version = "0.1.0"
+dependencies = [
+ "bevy_derive",
+ "bevy_ecs",
+]
+
+[[package]]
 name = "writeable"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

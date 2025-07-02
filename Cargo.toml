@@ -3,5 +3,6 @@ members = [
     "core",
     "database",
     "types",
+    "tests",
 ]
 resolver = "2" 
