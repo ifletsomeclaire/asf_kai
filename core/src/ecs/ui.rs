@@ -7,7 +7,7 @@ use crate::{
     config::Config,
     ecs::{
         framerate::FrameRate,
-        model::{AvailableModels, Model, AssetReports},
+        model::AssetReports,
     },
     renderer::events::ResizeEvent,
 };
@@ -35,31 +35,14 @@ impl Default for UiState {
     }
 }
 
-#[derive(Resource)]
-pub struct SpawnerState {
-    pub position: Vec3,
-}
-
-impl Default for SpawnerState {
-    fn default() -> Self {
-        Self {
-            position: Vec3::ZERO,
-        }
-    }
-}
-
 #[derive(SystemParam)]
-pub struct UiSystemParams<'w, 's> {
+pub struct UiSystemParams<'w> {
     egui_ctx: Res<'w, EguiCtx>,
     last_size: ResMut<'w, LastSize>,
     ui_state: ResMut<'w, UiState>,
     config: ResMut<'w, Config>,
     frame_rate: Res<'w, FrameRate>,
     events: EventWriter<'w, ResizeEvent>,
-    commands: Commands<'w, 's>,
-    available_models: Res<'w, AvailableModels>,
-    spawner_state: ResMut<'w, SpawnerState>,
-    model_query: Query<'w, 's, Entity, With<Model>>,
     asset_reports: Res<'w, AssetReports>,
 }
 
@@ -138,39 +121,5 @@ pub fn ui_system(mut ui_params: UiSystemParams) {
         });
 
         ui.separator();
-    });
-
-    egui::Window::new("Spawner").show(ctx, |ui| {
-        ui.horizontal(|ui| {
-            ui.label("Position:");
-            ui.add(egui::DragValue::new(&mut ui_params.spawner_state.position.x).speed(0.1));
-            ui.add(egui::DragValue::new(&mut ui_params.spawner_state.position.y).speed(0.1));
-            ui.add(egui::DragValue::new(&mut ui_params.spawner_state.position.z).speed(0.1));
-        });
-
-        ui.separator();
-
-        for model_info in &ui_params.available_models.models {
-            if ui.button(format!("Spawn {}", model_info.name)).clicked() {
-                let translation = ui_params.spawner_state.position;
-                ui_params.commands.spawn((
-                    Model {
-                        mesh_name: model_info.name.clone(),
-                        mesh_handle: model_info.mesh_handle.clone(),
-                        texture_handle: model_info.texture_handle.clone(),
-                    },
-                    Transform::from_translation(translation),
-                    GlobalTransform::default(),
-                ));
-            }
-        }
-
-        ui.separator();
-
-        if ui.button("Despawn Last").clicked() {
-            if let Some(entity) = ui_params.model_query.iter().last() {
-                ui_params.commands.entity(entity).despawn();
-            }
-        }
     });
 }

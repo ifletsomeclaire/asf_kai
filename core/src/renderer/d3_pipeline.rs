@@ -5,9 +5,10 @@ use wgpu::util::DeviceExt;
 
 use super::{
     core::{HDR_FORMAT, WgpuDevice, WgpuQueue},
+    scene::{FrameRenderData, MeshBindGroup},
     tonemapping_pass::HdrTexture,
 };
-use crate::ecs::{camera::Camera, model::PerFrameSceneData};
+use crate::ecs::camera::Camera;
 
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
@@ -222,34 +223,22 @@ pub fn update_camera_buffer_system(
 }
 
 pub fn render_d3_pipeline_system(
-    _device: Res<WgpuDevice>,
-    _queue: Res<WgpuQueue>,
+    device: Res<WgpuDevice>,
+    queue: Res<WgpuQueue>,
     pipeline: Res<D3Pipeline>,
     hdr_texture: Res<super::tonemapping_pass::HdrTexture>,
     depth_texture: Res<DepthTexture>,
-    scene_data: Option<Res<PerFrameSceneData>>,
+    frame_data: Option<Res<FrameRenderData>>,
+    mesh_bind_group: Option<Res<MeshBindGroup>>,
     camera_bind_group: Option<Res<CameraBindGroup>>,
 ) {
-    println!("--- Running render_d3_pipeline_system ---");
-    if scene_data.is_none() || camera_bind_group.is_none() {
-        if scene_data.is_none() {
-            println!("  - scene_data is None. Bailing.");
-        }
-        if camera_bind_group.is_none() {
-            println!("  - camera_bind_group is None. Bailing.");
-        }
+    let (Some(frame_data), Some(mesh_bind_group), Some(camera_bind_group)) =
+        (frame_data, mesh_bind_group, camera_bind_group)
+    else {
         return;
-    }
-    let scene_data = scene_data.unwrap();
-    let camera_bind_group = camera_bind_group.unwrap();
+    };
 
-    println!("  - Scene data and camera bind group are present.");
-    println!(
-        "  - Total vertices to draw: {}",
-        scene_data.total_vertices_to_draw
-    );
-
-    let mut encoder = _device
+    let mut encoder = device
         .0
         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("3d_render_encoder"),
@@ -274,18 +263,17 @@ pub fn render_d3_pipeline_system(
                 }),
                 stencil_ops: None,
             }),
-            timestamp_writes: None,
             occlusion_query_set: None,
+            timestamp_writes: None,
         });
 
-        println!("  - Beginning render pass.");
         render_pass.set_pipeline(&pipeline.pipeline);
         render_pass.set_bind_group(0, &camera_bind_group.0, &[]);
-        render_pass.set_bind_group(1, &scene_data.mesh_bind_group, &[]);
-        render_pass.draw(0..scene_data.total_vertices_to_draw, 0..1);
+        render_pass.set_bind_group(1, &mesh_bind_group.0, &[]);
+
+        // The single draw call for the entire scene.
+        render_pass.draw(0..frame_data.total_indices_to_draw, 0..1);
     }
 
-    println!("  - Submitting command encoder.");
-    _queue.0.submit(Some(encoder.finish()));
-    println!("--- Finished render_d3_pipeline_system ---");
+    queue.0.submit(Some(encoder.finish()));
 }

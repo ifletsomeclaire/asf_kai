@@ -10,14 +10,15 @@ use std::sync::Arc;
 use crate::{
     config::Config,
     ecs::{
+        asset_systems::{decrement_asset_ref_counts_system, process_spawn_requests_system},
         camera::{Camera, OrbitCamera, camera_control_system, setup_camera_transform_system},
         framerate::{FrameRate, frame_rate_system},
         input::{Input, keyboard_input_system},
         model::{
-            load_models_from_db_system, prepare_scene_data_system,
-            process_asset_deallocations_system, generate_asset_reports_system, AssetReports,
+            load_models_from_db_system,
+            generate_asset_reports_system, AssetReports,
         },
-        ui::{EguiCtx, LastSize, SpawnerState, UiState, ui_system},
+        ui::{EguiCtx, LastSize, UiState, ui_system},
     },
     renderer::{
         assets::AssetServer,
@@ -27,6 +28,7 @@ use crate::{
             update_camera_buffer_system,
         },
         events::ResizeEvent,
+        scene::prepare_and_copy_scene_data_system,
         tonemapping_pass::{
             TonemappingBindGroup, TonemappingPass, resize_hdr_texture_system,
             setup_tonemapping_pass_system,
@@ -113,7 +115,6 @@ impl Custom3d {
 
         world.init_resource::<FrameRate>();
         world.init_resource::<UiState>();
-        world.init_resource::<SpawnerState>();
         world.init_resource::<LastSize>();
         world.init_resource::<AssetReports>();
 
@@ -137,7 +138,8 @@ impl Custom3d {
             (
                 camera_control_system,
                 update_camera_buffer_system,
-                prepare_scene_data_system,
+                process_spawn_requests_system,
+                prepare_and_copy_scene_data_system,
             )
                 .chain(),
         );
@@ -148,8 +150,8 @@ impl Custom3d {
                 clear_hdr_texture_system,
                 render_triangle_system.run_if(|ui_state: Res<UiState>| ui_state.render_triangle),
                 render_d3_pipeline_system.run_if(|ui_state: Res<UiState>| ui_state.render_model),
-                process_asset_deallocations_system,
                 generate_asset_reports_system,
+                decrement_asset_ref_counts_system,
             )
                 .chain(),
         );

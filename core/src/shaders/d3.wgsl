@@ -20,11 +20,14 @@ struct MeshDescription {
     index_count: u32,
     first_index: u32,
     base_vertex: i32,
+    padding: u32,
 };
 struct Instance {
     model_matrix: mat4x4<f32>,
     mesh_id: u32,
+    texture_id: u32,
     texture_array_index: u32,
+    index_count: u32,
 };
 struct InstanceLookup {
     instance_id: u32,
@@ -36,9 +39,9 @@ var<storage, read> vertices: array<Vertex>;
 @group(1) @binding(1)
 var<storage, read> indices: array<Index>;
 @group(1) @binding(2)
-var<storage, read> mesh_descriptions: array<MeshDescription>;
-@group(1) @binding(3)
 var<storage, read> instances: array<Instance>;
+@group(1) @binding(3)
+var<storage, read> mesh_descriptions: array<MeshDescription>;
 @group(1) @binding(4)
 var<storage, read> instance_lookups: array<InstanceLookup>;
 @group(1) @binding(5)
