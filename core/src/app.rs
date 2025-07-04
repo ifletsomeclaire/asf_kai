@@ -13,8 +13,9 @@ use crate::{
         camera::{Camera, OrbitCamera, camera_control_system, update_camera_transform_system},
         framerate::{FrameRate, frame_rate_system},
         input::{Input, keyboard_input_system},
-        model::{initialize_asset_db_system, SpawnedEntities},
+        model::{initialize_asset_db_system, SpawnedEntities, initialize_fallback_assets_system},
         ui::{EguiCtx, LastSize, UiState, ui_system},
+        asset_systems::{patch_instance_data_system, process_asset_loads_system},
     },
     renderer::{
         core::{WgpuDevice, WgpuQueue, WgpuRenderState, initialize_renderer},
@@ -81,6 +82,7 @@ impl Custom3d {
                 setup_d3_pipeline_system,
                 setup_tonemapping_pass_system,
                 initialize_asset_db_system,
+                initialize_fallback_assets_system,
                 (
                     setup_triangle_pass_system,
                     update_camera_transform_system,
@@ -121,7 +123,9 @@ impl Custom3d {
                 ui_system,
                 update_camera_buffer_system.after(ui_system),
                 // Note: process_spawn_requests_system is removed. Spawning is handled by commands.
-                prepare_and_copy_scene_data_system,
+                process_asset_loads_system,
+                patch_instance_data_system.after(process_asset_loads_system),
+                prepare_and_copy_scene_data_system.after(patch_instance_data_system),
             ).chain(),
         );
         update_schedule.add_systems((sync_simple_transforms, mark_dirty_trees, propagate_parent_transforms).chain());

@@ -42,6 +42,9 @@ pub struct InstanceMaterial {
     pub material_handle: u64,
 }
 
+#[derive(Component)]
+pub struct Patched;
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct InstanceLookup {
@@ -51,6 +54,13 @@ pub struct InstanceLookup {
 
 #[derive(Resource, Default)]
 pub struct SpawnedEntities(pub Vec<Entity>);
+
+pub fn initialize_fallback_assets_system(
+    mut asset_server: ResMut<AssetServer>,
+    queue: Res<crate::renderer::core::WgpuQueue>,
+) {
+    asset_server.create_and_upload_fallback_assets(&queue.0);
+}
 
 /// This system loads all models and textures from the database at startup.
 /// It populates the AssetServer but does not spawn any instances itself.

@@ -9,7 +9,7 @@ pub struct Vertex {
     pub uv: Vec2,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Mesh {
     pub name: String,
     pub vertices: Vec<Vertex>,

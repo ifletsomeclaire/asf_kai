@@ -32,7 +32,12 @@ pub fn prepare_and_copy_scene_data_system(
     device: Res<WgpuDevice>,
     queue: Res<WgpuQueue>,
 ) {
-    let instances: Vec<InstanceGpuData> = instance_query.iter().copied().collect();
+    let instances: Vec<InstanceGpuData> = instance_query
+        .iter()
+        .filter(|inst| inst.index_count != u32::MAX)
+        .copied()
+        .collect();
+        
     if instances.is_empty() {
         commands.remove_resource::<MeshBindGroup>();
         commands.remove_resource::<FrameRenderData>();
