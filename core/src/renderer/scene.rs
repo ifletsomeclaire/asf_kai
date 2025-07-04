@@ -3,13 +3,14 @@ use bevy_ecs::prelude::*;
 use wgpu::util::DeviceExt;
 
 use crate::{
-    ecs::model::{GpuInstance, InstanceLookup, MeshDescription},
+    ecs::model::{InstanceGpuData, InstanceLookup, MeshDescription},
     renderer::{
         assets::AssetServer,
         core::{WgpuDevice, WgpuQueue},
         d3_pipeline::D3Pipeline,
     },
 };
+use std::collections::HashMap;
 
 /// A resource to hold the final data needed for the single main render pass.
 #[derive(Resource, Default)]
@@ -25,33 +26,32 @@ pub struct MeshBindGroup(pub wgpu::BindGroup);
 /// This replaces all previous "prepare" and "copy" logic.
 pub fn prepare_and_copy_scene_data_system(
     mut commands: Commands,
-    instance_query: Query<&GpuInstance>,
+    instance_query: Query<&InstanceGpuData>,
     asset_server: Res<AssetServer>,
     pipeline: Res<D3Pipeline>,
     device: Res<WgpuDevice>,
     queue: Res<WgpuQueue>,
 ) {
-    // --- Part A: Instance Data ---
-    // Bevy ECS stores components of the same type contiguously in archetypes.
-    // We can get a slice to all GpuInstance components across all archetypes.
-    let instances: Vec<GpuInstance> = instance_query.iter().copied().collect();
+    let instances: Vec<InstanceGpuData> = instance_query.iter().copied().collect();
     if instances.is_empty() {
-        // If there are no instances, remove the resources so the render system doesn't run.
         commands.remove_resource::<MeshBindGroup>();
         commands.remove_resource::<FrameRenderData>();
         return;
     }
-    let instance_buffer = device.0.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("instance_buffer"),
-        contents: bytemuck::cast_slice(&instances),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-
-    // --- Part B: Mesh Description Data ---
-    // The shader needs a buffer of MeshDescription structs.
-    // We need to ensure this is sorted by mesh_id so the shader can use `mesh_id` as an index.
+    
+    // --- Part A: Mesh Description Data ---
+    // The shader needs a buffer of MeshDescription structs. We sort the active meshes by their
+    // ID to ensure the buffer we create has a predictable order. The shader will use the mesh_id
+    // as an index into this sorted buffer.
     let mut all_meshes: Vec<_> = asset_server.meshes.iter().collect();
     all_meshes.sort_by_key(|(id, _)| **id);
+
+    // Create a map from the original (sparse) mesh ID to its new (dense) index in the sorted list.
+    let mesh_id_to_dense_index: HashMap<u64, u32> = all_meshes
+        .iter()
+        .enumerate()
+        .map(|(dense_index, (sparse_id, _))| (**sparse_id, dense_index as u32))
+        .collect();
 
     let mesh_descriptions: Vec<MeshDescription> = all_meshes
         .iter()
@@ -62,6 +62,7 @@ pub fn prepare_and_copy_scene_data_system(
             _padding: 0,
         })
         .collect();
+        
     let mesh_description_buffer =
         device.0.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("mesh_description_buffer"),
@@ -69,11 +70,38 @@ pub fn prepare_and_copy_scene_data_system(
             usage: wgpu::BufferUsages::STORAGE,
         });
 
+    // --- Part B: Instance Data (with remapped IDs) ---
+    // We must update the `mesh_id` in each instance to be the *dense index* from our map.
+    let remapped_instances: Vec<InstanceGpuData> = instances
+        .iter()
+        .filter_map(|original_instance| {
+            if let Some(dense_index) = mesh_id_to_dense_index.get(&(original_instance.mesh_id as u64)) {
+                let mut updated_instance = *original_instance;
+                updated_instance.mesh_id = *dense_index;
+                Some(updated_instance)
+            } else {
+                None // This instance's mesh is no longer loaded, so we skip it.
+            }
+        })
+        .collect();
+        
+    if remapped_instances.is_empty() {
+         commands.remove_resource::<MeshBindGroup>();
+         commands.remove_resource::<FrameRenderData>();
+         return;
+    }
+
+    let instance_buffer = device.0.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("instance_buffer"),
+        contents: bytemuck::cast_slice(&remapped_instances),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+
     // --- Part C: The "Uber" Lookup Buffer ---
     // This buffer maps a global vertex index to the specific instance it belongs to.
     let mut instance_lookups: Vec<InstanceLookup> = Vec::new();
     let mut total_indices = 0;
-    for (instance_id, instance) in instances.iter().enumerate() {
+    for (instance_id, instance) in remapped_instances.iter().enumerate() {
         for i in 0..instance.index_count {
             instance_lookups.push(InstanceLookup {
                 instance_id: instance_id as u32,
@@ -125,8 +153,6 @@ pub fn prepare_and_copy_scene_data_system(
         ],
     });
 
-    // --- Part E: Finalize ---
-    // Insert the bind group and total index count as resources for the render system to use.
     commands.insert_resource(MeshBindGroup(mesh_bind_group));
     commands.insert_resource(FrameRenderData {
         total_indices_to_draw: total_indices,

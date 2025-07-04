@@ -1,4 +1,4 @@
-use crate::ecs::input::Input;
+use crate::ecs::{input::Input, ui::EguiCtx};
 use bevy_ecs::prelude::*;
 use bevy_transform::components::Transform;
 use glam::{Mat4, Quat, Vec3};
@@ -34,6 +34,7 @@ pub struct OrbitCamera {
     pub yaw: f32,
     pub pitch: f32,
     pub distance: f32,
+    pub pan: Vec3,
 }
 
 impl Default for OrbitCamera {
@@ -43,33 +44,32 @@ impl Default for OrbitCamera {
             yaw: -std::f32::consts::FRAC_PI_2,
             pitch: std::f32::consts::FRAC_PI_4,
             distance: 10.0,
+            pan: Vec3::ZERO,
         }
     }
 }
 
-pub fn setup_camera_transform_system(
+pub fn update_camera_transform_system(
     mut query: Query<&mut Transform, With<Camera>>,
     orbit_camera: Res<OrbitCamera>,
 ) {
     if let Ok(mut transform) = query.single_mut() {
         let rotation =
             Quat::from_rotation_y(orbit_camera.yaw) * Quat::from_rotation_x(orbit_camera.pitch);
-        transform.translation = orbit_camera.target + rotation * (Vec3::Z * orbit_camera.distance);
-        transform.look_at(orbit_camera.target, Vec3::Y);
+        let target = orbit_camera.target + orbit_camera.pan;
+        transform.translation = target + rotation * (Vec3::Z * orbit_camera.distance);
+        transform.look_at(target, Vec3::Y);
     }
 }
 
 pub fn camera_control_system(
-    mut query: Query<&mut Transform, With<Camera>>,
     mut orbit_camera: ResMut<OrbitCamera>,
     input: Res<Input>,
+    egui_ctx: Res<EguiCtx>,
 ) {
-    let mut transform = if let Ok(t) = query.single_mut() {
-        t
-    } else {
-        // No camera entity, so nothing to do.
+    if egui_ctx.wants_pointer_input() || egui_ctx.wants_keyboard_input() {
         return;
-    };
+    }
 
     if input.0.raw_scroll_delta.y != 0.0 {
         orbit_camera.distance -= input.0.raw_scroll_delta.y * orbit_camera.distance * 0.1;
@@ -87,8 +87,12 @@ pub fn camera_control_system(
         );
     }
 
-    let rotation =
-        Quat::from_rotation_y(orbit_camera.yaw) * Quat::from_rotation_x(orbit_camera.pitch);
-    transform.translation = orbit_camera.target + rotation * (Vec3::Z * orbit_camera.distance);
-    transform.look_at(orbit_camera.target, Vec3::Y);
+    if input.0.pointer.secondary_down() {
+        let delta = input.0.pointer.delta();
+        let rotation =
+            Quat::from_rotation_y(orbit_camera.yaw) * Quat::from_rotation_x(orbit_camera.pitch);
+        let right = rotation * -Vec3::X;
+        let up = rotation * Vec3::Y;
+        orbit_camera.pan += (right * delta.x - up * delta.y) * 0.01;
+    }
 }

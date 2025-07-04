@@ -10,18 +10,13 @@ use std::sync::Arc;
 use crate::{
     config::Config,
     ecs::{
-        asset_systems::{decrement_asset_ref_counts_system, process_spawn_requests_system},
-        camera::{Camera, OrbitCamera, camera_control_system, setup_camera_transform_system},
+        camera::{Camera, OrbitCamera, camera_control_system, update_camera_transform_system},
         framerate::{FrameRate, frame_rate_system},
         input::{Input, keyboard_input_system},
-        model::{
-            load_models_from_db_system,
-            generate_asset_reports_system, AssetReports,
-        },
+        model::{initialize_asset_db_system, SpawnedEntities},
         ui::{EguiCtx, LastSize, UiState, ui_system},
     },
     renderer::{
-        assets::AssetServer,
         core::{WgpuDevice, WgpuQueue, WgpuRenderState, initialize_renderer},
         d3_pipeline::{
             render_d3_pipeline_system, setup_d3_pipeline_system, setup_depth_texture_system,
@@ -40,18 +35,19 @@ use crate::{
 };
 
 #[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
+struct Update;
+
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+struct RendererInitialization;
+
+#[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
 struct Startup;
+
+#[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
+struct Shutdown;
 
 #[derive(Resource)]
 pub struct InitialSize(pub wgpu::Extent3d);
-
-fn infallible_load_models_from_db_system(
-    commands: Commands,
-    asset_server: ResMut<AssetServer>,
-    queue: Res<WgpuQueue>,
-) {
-    load_models_from_db_system(commands, asset_server, queue).unwrap();
-}
 
 pub struct Custom3d {
     pub world: World,
@@ -65,109 +61,79 @@ impl Custom3d {
 
         let mut world = World::default();
 
-        // --- Core Resource Initialization ---
         let device = Arc::new(wgpu_render_state.device.clone());
         let queue = Arc::new(wgpu_render_state.queue.clone());
         world.insert_resource(WgpuDevice(device.clone()));
-        world.insert_resource(WgpuQueue(queue));
+        world.insert_resource(WgpuQueue(queue.clone()));
         world.insert_resource(WgpuRenderState(wgpu_render_state.clone()));
-        initialize_renderer(&mut world, &device); // Initialize AssetServer here
-        // --- End Core Resource Initialization ---
+        initialize_renderer(&mut world, &device);
 
         world.insert_resource(config);
         world.init_resource::<Events<ResizeEvent>>();
-
-        let initial_size_pixels = [1280, 720]; // Default value
-        world.insert_resource(InitialSize(wgpu::Extent3d {
-            width: initial_size_pixels[0],
-            height: initial_size_pixels[1],
-            depth_or_array_layers: 1,
-        }));
-
+        world.insert_resource(InitialSize(wgpu::Extent3d { width: 1280, height: 720, depth_or_array_layers: 1 }));
         world.init_resource::<OrbitCamera>();
         world.insert_resource(EguiCtx(cc.egui_ctx.clone()));
-
+        
+        // --- Startup Schedule ---
         let mut startup_schedule = Schedule::new(Startup);
         startup_schedule.add_systems(
             (
-                setup_triangle_pass_system,
-                setup_tonemapping_pass_system,
-                setup_depth_texture_system,
                 setup_d3_pipeline_system,
-                infallible_load_models_from_db_system,
-                setup_camera_transform_system,
+                setup_tonemapping_pass_system,
+                initialize_asset_db_system,
+                (
+                    setup_triangle_pass_system,
+                    update_camera_transform_system,
+                    setup_depth_texture_system,
+                    resize_hdr_texture_system.after(setup_depth_texture_system),
+                )
+                    .after(setup_d3_pipeline_system)
+                    .after(setup_tonemapping_pass_system),
             )
                 .chain(),
         );
         startup_schedule.run(&mut world);
         world.remove_resource::<InitialSize>();
 
-        wgpu_render_state
-            .renderer
-            .write()
-            .callback_resources
-            .insert(world.resource::<TonemappingPass>().clone());
-        wgpu_render_state
-            .renderer
-            .write()
-            .callback_resources
-            .insert(world.remove_resource::<TonemappingBindGroup>().unwrap());
+        let tonemapping_pass = world.resource::<TonemappingPass>().clone();
+        let tonemapping_bind_group = world.remove_resource::<TonemappingBindGroup>().unwrap();
+
+        let wgpu_render_state = world.get_resource_mut::<WgpuRenderState>().unwrap();
+
+        wgpu_render_state.0.renderer.write().callback_resources.insert(tonemapping_pass);
+        wgpu_render_state.0.renderer.write().callback_resources.insert(tonemapping_bind_group);
 
         world.init_resource::<FrameRate>();
         world.init_resource::<UiState>();
         world.init_resource::<LastSize>();
-        world.init_resource::<AssetReports>();
+        world.init_resource::<SpawnedEntities>();
 
-        world.spawn((
-            Camera::default(),
-            Transform::default(),
-            GlobalTransform::default(),
-        ));
+        world.spawn((Camera::default(), Transform::default(), GlobalTransform::default()));
 
-        let mut schedule = Schedule::default();
-        schedule.add_systems((keyboard_input_system, ui_system, frame_rate_system).chain());
-        schedule.add_systems(
+        // --- Main Update Schedule ---
+        let mut update_schedule = Schedule::new(Update);
+        update_schedule.add_systems(
             (
-                sync_simple_transforms,
-                mark_dirty_trees,
-                propagate_parent_transforms,
-            )
-                .chain(),
-        );
-        schedule.add_systems(
-            (
+                keyboard_input_system,
                 camera_control_system,
-                update_camera_buffer_system,
-                process_spawn_requests_system,
+                update_camera_transform_system.after(camera_control_system),
+                frame_rate_system,
+                ui_system,
+                update_camera_buffer_system.after(ui_system),
+                // Note: process_spawn_requests_system is removed. Spawning is handled by commands.
                 prepare_and_copy_scene_data_system,
-            )
-                .chain(),
+            ).chain(),
         );
-        schedule
-            .add_systems((resize_hdr_texture_system, update_camera_aspect_ratio_system).chain());
-        schedule.add_systems(
+        update_schedule.add_systems((sync_simple_transforms, mark_dirty_trees, propagate_parent_transforms).chain());
+        update_schedule.add_systems(
             (
                 clear_hdr_texture_system,
                 render_triangle_system.run_if(|ui_state: Res<UiState>| ui_state.render_triangle),
                 render_d3_pipeline_system.run_if(|ui_state: Res<UiState>| ui_state.render_model),
-                generate_asset_reports_system,
-                decrement_asset_ref_counts_system,
-            )
-                .chain(),
+            ).chain(),
         );
 
-        Some(Self { world, schedule })
-    }
-}
-
-pub fn update_camera_aspect_ratio_system(
-    mut events: EventReader<ResizeEvent>,
-    mut query: Query<&mut Camera>,
-) {
-    if let Ok(mut camera) = query.single_mut() {
-        for event in events.read() {
-            camera.aspect = event.0.width as f32 / event.0.height as f32;
-        }
+        Some(Self { world, schedule: update_schedule })
     }
 }
 
