@@ -3,7 +3,7 @@ use bevy_ecs::prelude::*;
 use crate::{
     ecs::model::InstanceGpuData,
     renderer::{
-        assets::{AssetServer, AssetLoadResult, LoadingStatus},
+        assets::{AssetServer, LoadedAssetData, LoadingStatus},
         core::WgpuQueue,
     },
 };
@@ -13,17 +13,51 @@ pub fn process_asset_loads_system(
     queue: Res<WgpuQueue>,
 ) {
     let messages: Vec<_> = asset_server.asset_load_receiver.try_iter().collect();
-    for msg in messages {
-        match msg {
-            AssetLoadResult::Mesh {
-                name,
-                cpu_mesh,
-                token,
-            } => {
-                asset_server.finish_loading_mesh(name, cpu_mesh, token, &queue.0);
+    for msg_batch in messages {
+        let mut all_tokens_match = true;
+        for loaded_asset in &msg_batch.assets {
+            if let Some(LoadingStatus::Loading { token: stored_token, .. }) = asset_server.mesh_load_state.get(&loaded_asset.name) {
+                if *stored_token != msg_batch.token {
+                    all_tokens_match = false;
+                    break;
+                }
+            } else if let Some(LoadingStatus::Loading { token: stored_token, .. }) = asset_server.texture_load_state.get(&loaded_asset.name) {
+                 if *stored_token != msg_batch.token {
+                    all_tokens_match = false;
+                    break;
+                }
             }
-            AssetLoadResult::Texture { name, image, token } => {
-                asset_server.finish_loading_texture(name, image, token, &queue.0);
+        }
+        
+        if all_tokens_match {
+            for loaded_asset in msg_batch.assets {
+                let (id_to_upload, is_mesh) = {
+                    let is_mesh = matches!(loaded_asset.data, LoadedAssetData::Mesh(_));
+                    let state_map = if is_mesh { &asset_server.mesh_load_state } else { &asset_server.texture_load_state };
+                    
+                    let id = if let Some(LoadingStatus::Loading { id, .. }) = state_map.get(&loaded_asset.name) {
+                        Some(*id)
+                    } else {
+                        None
+                    };
+                    (id, is_mesh)
+                };
+
+                if let Some(id) = id_to_upload {
+                    if is_mesh {
+                        if let LoadedAssetData::Mesh(cpu_mesh) = loaded_asset.data {
+                            if asset_server.upload_mesh_to_gpu(id, &cpu_mesh, &queue.0) {
+                                asset_server.mesh_load_state.insert(loaded_asset.name, LoadingStatus::Loaded(id));
+                            }
+                        }
+                    } else {
+                        if let LoadedAssetData::Texture(image) = loaded_asset.data {
+                             if asset_server.upload_texture_to_gpu(id, &image, &queue.0, &loaded_asset.name) {
+                                asset_server.texture_load_state.insert(loaded_asset.name, LoadingStatus::Loaded(id));
+                            }
+                        }
+                    }
+                }
             }
         }
     }

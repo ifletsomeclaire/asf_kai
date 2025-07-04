@@ -3,29 +3,50 @@ use image::{DynamicImage};
 use offset_allocator::{Allocation, Allocator};
 use redb::{Database, ReadableTable, TableDefinition};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use types::{Model as TypesModel, Mesh as CpuMesh};
+use types::{Mesh as CpuMesh, Model as TypesModel};
 
 use crate::ecs::model::Vertex;
 
+// The message telling the background task what to load
+#[derive(Clone, Copy)]
+pub enum AssetType {
+    Mesh,
+    Texture,
+}
+
+pub struct AssetRequest {
+    pub name: String,
+    pub kind: AssetType,
+}
+
+// Message from Main Thread -> Worker Thread
+pub struct BatchAssetLoadRequest {
+    pub assets: Vec<AssetRequest>,
+    pub token: LoadToken,
+}
+
+// Individual loaded asset data
+pub enum LoadedAssetData {
+    Mesh(CpuMesh),
+    Texture(DynamicImage),
+}
+
+// A struct to associate the loaded data with its original name
+pub struct LoadedAsset {
+    pub name: String,
+    pub data: LoadedAssetData,
+}
+
+// Message from Worker Thread -> Main Thread
+pub struct BatchAssetLoadResult {
+    pub assets: Vec<LoadedAsset>,
+    pub token: LoadToken,
+}
+
 // A unique ticket to validate a specific load request
 pub type LoadToken = u64;
-
-// The message containing data from the background task
-pub enum AssetLoadResult {
-    Mesh {
-        name: String,
-        cpu_mesh: CpuMesh,
-        token: LoadToken, // The ticket to prevent race conditions
-    },
-    Texture {
-        name: String,
-        image: DynamicImage,
-        token: LoadToken,
-    },
-}
 
 // The state of a given asset name
 pub enum LoadingStatus {
@@ -33,8 +54,8 @@ pub enum LoadingStatus {
     Loaded(u64),
 }
 
-const MODEL_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("models");
-const TEXTURE_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("textures");
+pub const MODEL_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("models");
+pub const TEXTURE_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("textures");
 
 // --- Handle IDs ---
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -89,8 +110,9 @@ struct GpuTexturePool {
 #[derive(Resource)]
 pub struct AssetServer {
     // --- Lock-Free Communication ---
-    asset_load_sender: crossbeam_channel::Sender<AssetLoadResult>,
-    pub asset_load_receiver: crossbeam_channel::Receiver<AssetLoadResult>,
+    pub asset_load_request_sender: Option<crossbeam_channel::Sender<BatchAssetLoadRequest>>,
+    pub asset_load_result_sender: crossbeam_channel::Sender<BatchAssetLoadResult>,
+    pub asset_load_receiver: crossbeam_channel::Receiver<BatchAssetLoadResult>,
 
     // --- State Tracking ---
     pub mesh_load_state: HashMap<String, LoadingStatus>,
@@ -101,7 +123,7 @@ pub struct AssetServer {
     texture_pool: GpuTexturePool,
 
     // --- Other fields ---
-    db: Option<Arc<Database>>,
+    pub db: Option<Arc<Database>>,
     pub fallback_gpu_mesh: Option<GpuMesh>,
     pub fallback_gpu_texture: Option<GpuTexture>,
 
@@ -129,8 +151,8 @@ pub struct AssetServer {
     pub materials: HashMap<u64, Material>,
 
     // --- Name to Handle Mapping ---
-    mesh_name_to_handle: HashMap<String, MeshHandle>,
-    texture_name_to_handle: HashMap<String, TextureHandle>,
+    pub mesh_name_to_handle: HashMap<String, MeshHandle>,
+    pub texture_name_to_handle: HashMap<String, TextureHandle>,
     material_lookup: HashMap<(u64, u64), MaterialHandle>,
     
     // --- For UI ---
@@ -187,7 +209,7 @@ impl AssetServer {
             free_slots: (0..TEXTURE_ARRAY_SIZE).rev().collect(),
         };
 
-        let (asset_load_sender, asset_load_receiver) = crossbeam_channel::unbounded();
+        let (asset_load_result_sender, asset_load_receiver) = crossbeam_channel::unbounded();
 
         Self {
             mesh_pool,
@@ -214,7 +236,8 @@ impl AssetServer {
             next_load_token: AtomicU64::new(0),
             all_mesh_names: Vec::new(),
             all_texture_names: Vec::new(),
-            asset_load_sender,
+            asset_load_request_sender: None,
+            asset_load_result_sender,
             asset_load_receiver,
             mesh_load_state: HashMap::new(),
             texture_load_state: HashMap::new(),
@@ -302,101 +325,71 @@ impl AssetServer {
         self.db = Some(Arc::new(db));
     }
 
-    pub fn get_mesh_handle(&mut self, name: &str) -> MeshHandle {
-        if let Some(status) = self.mesh_load_state.get(name) {
-            let id = match status {
-                LoadingStatus::Loading { id, .. } => *id,
-                LoadingStatus::Loaded(id) => *id,
+    pub fn load_batch(&mut self, requests: &[AssetRequest]) {
+        let mut new_requests = Vec::new();
+
+        for request in requests {
+            let already_loading = match request.kind {
+                AssetType::Mesh => self.mesh_load_state.contains_key(&request.name),
+                AssetType::Texture => self.texture_load_state.contains_key(&request.name),
             };
-            return MeshHandle(id);
+
+            if !already_loading {
+                let id = match request.kind {
+                    AssetType::Mesh => self.mesh_id_free_list.pop().unwrap_or_else(|| self.next_mesh_id.fetch_add(1, Ordering::Relaxed)),
+                    AssetType::Texture => self.texture_id_free_list.pop().unwrap_or_else(|| self.next_texture_id.fetch_add(1, Ordering::Relaxed)),
+                };
+                
+                // We generate a temporary token here. The real token will be for the batch.
+                let temp_token = self.next_load_token.fetch_add(1, Ordering::Relaxed);
+
+                match request.kind {
+                    AssetType::Mesh => {
+                        self.mesh_load_state.insert(request.name.clone(), LoadingStatus::Loading { id, token: temp_token });
+                        let handle = MeshHandle(id);
+                        self.mesh_name_to_handle.insert(request.name.clone(), handle);
+                    }
+                    AssetType::Texture => {
+                        self.texture_load_state.insert(request.name.clone(), LoadingStatus::Loading { id, token: temp_token });
+                        let handle = TextureHandle(id);
+                        self.texture_name_to_handle.insert(request.name.clone(), handle);
+                    }
+                }
+                new_requests.push(AssetRequest {
+                    name: request.name.clone(),
+                    kind: request.kind,
+                });
+            }
         }
 
-        // It's a new request.
-        let id = self
-            .mesh_id_free_list
-            .pop()
-            .unwrap_or_else(|| self.next_mesh_id.fetch_add(1, Ordering::Relaxed));
-        let token = self.next_load_token.fetch_add(1, Ordering::Relaxed);
-        let handle = MeshHandle(id);
-
-        self.mesh_load_state
-            .insert(name.to_string(), LoadingStatus::Loading { id, token });
-
-        // --- Spawn Background Task ---
-        let sender = self.asset_load_sender.clone();
-        let db = self.db.as_ref().unwrap().clone();
-        let name_owned = name.to_string();
-
-        std::thread::spawn(move || {
-            let read_txn = db.begin_read().unwrap();
-            let table = read_txn.open_table(MODEL_TABLE).unwrap();
-
-            for item in table.iter().unwrap().flatten() {
-                if let Ok(model) = bincode::deserialize::<TypesModel>(item.1.value()) {
-                    for mesh in &model.meshes {
-                        if mesh.name == name_owned {
-                            sender
-                                .send(AssetLoadResult::Mesh {
-                                    name: name_owned,
-                                    cpu_mesh: mesh.clone(),
-                                    token,
-                                })
-                                .unwrap();
-                            return;
+        if !new_requests.is_empty() {
+            let batch_token = self.next_load_token.fetch_add(1, Ordering::Relaxed);
+            
+            // Update all the new requests to use the same batch token
+            for request in &new_requests {
+                 match request.kind {
+                    AssetType::Mesh => {
+                        if let Some(LoadingStatus::Loading { id, token }) = self.mesh_load_state.get_mut(&request.name) {
+                            *token = batch_token;
+                        }
+                    }
+                    AssetType::Texture => {
+                         if let Some(LoadingStatus::Loading { id, token }) = self.texture_load_state.get_mut(&request.name) {
+                            *token = batch_token;
                         }
                     }
                 }
             }
-        });
 
-        handle
-    }
-
-    pub fn get_texture_handle(&mut self, name: &str) -> TextureHandle {
-        if let Some(status) = self.texture_load_state.get(name) {
-            let id = match status {
-                LoadingStatus::Loading { id, .. } => *id,
-                LoadingStatus::Loaded(id) => *id,
+            let request = BatchAssetLoadRequest {
+                assets: new_requests,
+                token: batch_token,
             };
-            return TextureHandle(id);
+            self.asset_load_request_sender.as_ref().unwrap().send(request).unwrap();
         }
-
-        let id = self
-            .texture_id_free_list
-            .pop()
-            .unwrap_or_else(|| self.next_texture_id.fetch_add(1, Ordering::Relaxed));
-        let token = self.next_load_token.fetch_add(1, Ordering::Relaxed);
-        let handle = TextureHandle(id);
-
-        self.texture_load_state
-            .insert(name.to_string(), LoadingStatus::Loading { id, token });
-
-        // --- Spawn Background Task ---
-        let sender = self.asset_load_sender.clone();
-        let db = self.db.as_ref().unwrap().clone();
-        let name_owned = name.to_string();
-
-        std::thread::spawn(move || {
-            let read_txn = db.begin_read().unwrap();
-            let table = read_txn.open_table(TEXTURE_TABLE).unwrap();
-
-            if let Ok(Some(data)) = table.get(name_owned.as_str()) {
-                if let Ok(image) = image::load_from_memory(data.value()) {
-                    sender
-                        .send(AssetLoadResult::Texture {
-                            name: name_owned,
-                            image,
-                            token,
-                        })
-                        .unwrap();
-                }
-            }
-        });
-
-        handle
     }
 
-    fn upload_mesh_to_gpu(&mut self, id: u64, cpu_mesh: &CpuMesh, queue: &wgpu::Queue) -> bool {
+    pub fn upload_mesh_to_gpu(&mut self, id: u64, cpu_mesh: &CpuMesh, queue: &wgpu::Queue) -> bool {
         let vertices: Vec<Vertex> = cpu_mesh
             .vertices
             .iter()
@@ -444,7 +437,7 @@ impl AssetServer {
         true
     }
 
-    fn upload_texture_to_gpu(
+    pub fn upload_texture_to_gpu(
         &mut self,
         id: u64,
         image: &DynamicImage,
@@ -466,7 +459,7 @@ impl AssetServer {
         let Some(texture_array_index) = self.texture_pool.free_slots.pop() else { return false; };
 
         queue.write_texture(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo {
                 texture: &self.texture_pool.texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d {
@@ -477,7 +470,7 @@ impl AssetServer {
                 aspect: wgpu::TextureAspect::All,
             },
             &rgba,
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4 * dimensions.width),
                 rows_per_image: Some(dimensions.height),

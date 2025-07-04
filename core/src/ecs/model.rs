@@ -1,12 +1,16 @@
 use bevy_ecs::prelude::*;
 use bytemuck::{Pod, Zeroable};
-use redb::{Database, TableDefinition};
+use redb::{Database, ReadableTable};
 use std::{env, path::PathBuf};
 
-use crate::renderer::{assets::AssetServer};
-
-const MODEL_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("models");
-const TEXTURE_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("textures");
+use crate::renderer::{
+    assets::{
+        AssetServer, AssetType, BatchAssetLoadRequest, LoadedAsset, LoadedAssetData, MODEL_TABLE,
+        TEXTURE_TABLE,
+    },
+};
+use crossbeam_channel::unbounded;
+use types::Model as TypesModel;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -60,6 +64,62 @@ pub fn initialize_fallback_assets_system(
     queue: Res<crate::renderer::core::WgpuQueue>,
 ) {
     asset_server.create_and_upload_fallback_assets(&queue.0);
+}
+
+pub fn spawn_asset_loader_task_system(mut asset_server: ResMut<AssetServer>) {
+    let (s, r) = unbounded::<BatchAssetLoadRequest>();
+    asset_server.asset_load_request_sender = Some(s);
+
+    let result_sender = asset_server.asset_load_result_sender.clone();
+    let db = asset_server.db.as_ref().unwrap().clone();
+
+    std::thread::spawn(move || {
+        for request_batch in r {
+            let mut results = Vec::new();
+            for request in request_batch.assets {
+                match request.kind {
+                    AssetType::Mesh => {
+                        let read_txn = db.begin_read().unwrap();
+                        let table = read_txn.open_table(MODEL_TABLE).unwrap();
+                        for item in table.iter().unwrap().flatten() {
+                            if let Ok(model) = bincode::deserialize::<TypesModel>(item.1.value())
+                            {
+                                for mesh in &model.meshes {
+                                    if mesh.name == request.name {
+                                        results.push(LoadedAsset {
+                                            name: request.name.clone(),
+                                            data: LoadedAssetData::Mesh(mesh.clone()),
+                                        });
+                                        break; // Found the mesh, move to next request
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    AssetType::Texture => {
+                        let read_txn = db.begin_read().unwrap();
+                        let table = read_txn.open_table(TEXTURE_TABLE).unwrap();
+                        if let Ok(Some(data)) = table.get(request.name.as_str()) {
+                            if let Ok(image) = image::load_from_memory(data.value()) {
+                                results.push(LoadedAsset {
+                                    name: request.name.clone(),
+                                    data: LoadedAssetData::Texture(image),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !results.is_empty() {
+                let result_batch = crate::renderer::assets::BatchAssetLoadResult {
+                    assets: results,
+                    token: request_batch.token,
+                };
+                result_sender.send(result_batch).unwrap();
+            }
+        }
+    });
 }
 
 /// This system loads all models and textures from the database at startup.

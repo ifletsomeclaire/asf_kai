@@ -1,6 +1,6 @@
 use bevy_ecs::{prelude::*, system::Command};
 use bevy_transform::components::GlobalTransform;
-use crate::{renderer::{assets::AssetServer}, ecs::model::{InstanceGpuData, InstanceMaterial, SpawnedEntities}};
+use crate::{renderer::{assets::{AssetServer, AssetType, AssetRequest}}, ecs::model::{InstanceGpuData, InstanceMaterial, SpawnedEntities}};
 
 /// A command to spawn a new instance of a model.
 /// This command handles all the logic of interacting with the AssetServer.
@@ -13,17 +13,25 @@ pub struct SpawnInstance {
 impl Command for SpawnInstance {
     fn apply(self, world: &mut World) {
         world.resource_scope(|world, mut asset_server: Mut<AssetServer>| {
-            // 1. Get handles for the named assets. This is now immediate.
-            let mesh_handle = asset_server.get_mesh_handle(&self.mesh_name);
-            let texture_handle = asset_server.get_texture_handle(&self.texture_name);
 
-            // 2. Get or create a material from the handles.
+            // 1. Create a batch request for the assets.
+            let requests = [
+                AssetRequest { name: self.mesh_name.clone(), kind: AssetType::Mesh },
+                AssetRequest { name: self.texture_name.clone(), kind: AssetType::Texture },
+            ];
+            asset_server.load_batch(&requests);
+            
+            // 2. Get handles for the named assets. They will exist now because load_batch creates them.
+            let mesh_handle = *asset_server.mesh_name_to_handle.get(&self.mesh_name).unwrap();
+            let texture_handle = *asset_server.texture_name_to_handle.get(&self.texture_name).unwrap();
+
+            // 3. Get or create a material from the handles.
             let material_handle = asset_server.get_or_create_material(mesh_handle, texture_handle);
 
-            // 3. Increment the reference count for the material.
+            // 4. Increment the reference count for the material.
             asset_server.increment_material_ref(material_handle.0);
 
-            // 4. Create the GpuInstance component, using fallback data until loaded.
+            // 5. Create the GpuInstance component, using fallback data until loaded.
             let fallback_mesh = asset_server.fallback_gpu_mesh.as_ref().expect("Fallback mesh not initialized");
             let fallback_texture = asset_server.fallback_gpu_texture.as_ref().expect("Fallback texture not initialized");
 
@@ -39,10 +47,10 @@ impl Command for SpawnInstance {
                 material_handle: material_handle.0,
             };
 
-            // 5. Spawn the entity with the component containing placeholder data.
+            // 6. Spawn the entity with the component containing placeholder data.
             let entity_id = world.spawn((instance_gpu_data, instance_material)).id();
 
-            // 6. Add the new entity to our tracking list for the UI.
+            // 7. Add the new entity to our tracking list for the UI.
             if let Some(mut spawned_entities) = world.get_resource_mut::<SpawnedEntities>() {
                 spawned_entities.0.push(entity_id);
             }

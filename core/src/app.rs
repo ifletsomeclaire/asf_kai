@@ -13,7 +13,10 @@ use crate::{
         camera::{Camera, OrbitCamera, camera_control_system, update_camera_transform_system},
         framerate::{FrameRate, frame_rate_system},
         input::{Input, keyboard_input_system},
-        model::{initialize_asset_db_system, SpawnedEntities, initialize_fallback_assets_system},
+        model::{
+            initialize_asset_db_system, initialize_fallback_assets_system,
+            spawn_asset_loader_task_system, SpawnedEntities,
+        },
         ui::{EguiCtx, LastSize, UiState, ui_system},
         asset_systems::{patch_instance_data_system, process_asset_loads_system},
     },
@@ -83,6 +86,7 @@ impl Custom3d {
                 setup_tonemapping_pass_system,
                 initialize_asset_db_system,
                 initialize_fallback_assets_system,
+                spawn_asset_loader_task_system,
                 (
                     setup_triangle_pass_system,
                     update_camera_transform_system,
