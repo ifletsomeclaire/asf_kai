@@ -20,13 +20,20 @@ impl ModelDatabase {
         Ok(Self { db })
     }
 
-    pub fn populate_from_assets<P: AsRef<Path>>(&self, assets_dir: P) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn populate_from_assets<P: AsRef<Path>>(
+        &self,
+        assets_dir: P,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let write_txn = self.db.begin_write()?;
         {
             let mut model_table = write_txn.open_table(MODEL_TABLE)?;
             let mut texture_table = write_txn.open_table(TEXTURE_TABLE)?;
-            
-            fn visit_dir(dir: &Path, model_table: &mut redb::Table<&str, &[u8]>, texture_table: &mut redb::Table<&str, &[u8]>) -> Result<(), Box<dyn std::error::Error>> {
+
+            fn visit_dir(
+                dir: &Path,
+                model_table: &mut redb::Table<&str, &[u8]>,
+                texture_table: &mut redb::Table<&str, &[u8]>,
+            ) -> Result<(), Box<dyn std::error::Error>> {
                 if dir.is_dir() {
                     for entry in fs::read_dir(dir)? {
                         let entry = entry?;
@@ -41,9 +48,16 @@ impl ModelDatabase {
                 Ok(())
             }
 
-            fn process_file(path: &Path, model_table: &mut redb::Table<&str, &[u8]>, texture_table: &mut redb::Table<&str, &[u8]>) -> Result<(), Box<dyn std::error::Error>> {
+            fn process_file(
+                path: &Path,
+                model_table: &mut redb::Table<&str, &[u8]>,
+                texture_table: &mut redb::Table<&str, &[u8]>,
+            ) -> Result<(), Box<dyn std::error::Error>> {
                 let extension = path.extension().and_then(|s| s.to_str());
-                let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or_default();
+                let file_name = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or_default();
 
                 match extension {
                     Some("gltf") | Some("glb") => {

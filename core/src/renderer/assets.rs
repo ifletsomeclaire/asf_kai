@@ -1,10 +1,10 @@
 use bevy_ecs::prelude::{Component, Resource};
-use image::{DynamicImage};
+use image::DynamicImage;
 use offset_allocator::{Allocation, Allocator};
 use redb::{Database, ReadableTable, TableDefinition};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use types::{Mesh as CpuMesh, Model as TypesModel};
 
 use crate::ecs::model::Vertex;
@@ -131,7 +131,7 @@ pub struct AssetServer {
     mesh_ref_counts: HashMap<u64, usize>,
     texture_ref_counts: HashMap<u64, usize>,
     material_ref_counts: HashMap<u64, usize>,
-    
+
     // --- GPU Buffer Allocations ---
     mesh_allocations: HashMap<u64, (Allocation, Allocation)>,
 
@@ -144,7 +144,7 @@ pub struct AssetServer {
     next_texture_id: AtomicU64,
     next_material_id: AtomicU64,
     next_load_token: AtomicU64,
-    
+
     // --- Asset Storage (now with Options to allow for "holes") ---
     pub meshes: HashMap<u64, GpuMesh>,
     pub textures: HashMap<u64, GpuTexture>,
@@ -154,7 +154,7 @@ pub struct AssetServer {
     pub mesh_name_to_handle: HashMap<String, MeshHandle>,
     pub texture_name_to_handle: HashMap<String, TextureHandle>,
     material_lookup: HashMap<(u64, u64), MaterialHandle>,
-    
+
     // --- For UI ---
     all_mesh_names: Vec<String>,
     all_texture_names: Vec<String>,
@@ -167,13 +167,17 @@ impl AssetServer {
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("global_vertex_buffer"),
             size: VERTEX_BUFFER_SIZE as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
+            usage: wgpu::BufferUsages::VERTEX
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
         let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("global_index_buffer"),
             size: INDEX_BUFFER_SIZE as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::STORAGE,
+            usage: wgpu::BufferUsages::INDEX
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
         let mesh_pool = GpuMeshPool {
@@ -250,35 +254,131 @@ impl AssetServer {
             name: "fallback_cube".to_string(),
             vertices: vec![
                 // -Z
-                types::Vertex { position: [-0.5, -0.5, -0.5].into(), normal: [0.0, 0.0, -1.0].into(), uv: [0.0, 0.0].into() },
-                types::Vertex { position: [0.5, -0.5, -0.5].into(), normal: [0.0, 0.0, -1.0].into(), uv: [1.0, 0.0].into() },
-                types::Vertex { position: [0.5, 0.5, -0.5].into(), normal: [0.0, 0.0, -1.0].into(), uv: [1.0, 1.0].into() },
-                types::Vertex { position: [-0.5, 0.5, -0.5].into(), normal: [0.0, 0.0, -1.0].into(), uv: [0.0, 1.0].into() },
+                types::Vertex {
+                    position: [-0.5, -0.5, -0.5].into(),
+                    normal: [0.0, 0.0, -1.0].into(),
+                    uv: [0.0, 0.0].into(),
+                },
+                types::Vertex {
+                    position: [0.5, -0.5, -0.5].into(),
+                    normal: [0.0, 0.0, -1.0].into(),
+                    uv: [1.0, 0.0].into(),
+                },
+                types::Vertex {
+                    position: [0.5, 0.5, -0.5].into(),
+                    normal: [0.0, 0.0, -1.0].into(),
+                    uv: [1.0, 1.0].into(),
+                },
+                types::Vertex {
+                    position: [-0.5, 0.5, -0.5].into(),
+                    normal: [0.0, 0.0, -1.0].into(),
+                    uv: [0.0, 1.0].into(),
+                },
                 // +Z
-                types::Vertex { position: [-0.5, -0.5, 0.5].into(), normal: [0.0, 0.0, 1.0].into(), uv: [0.0, 0.0].into() },
-                types::Vertex { position: [0.5, -0.5, 0.5].into(), normal: [0.0, 0.0, 1.0].into(), uv: [1.0, 0.0].into() },
-                types::Vertex { position: [0.5, 0.5, 0.5].into(), normal: [0.0, 0.0, 1.0].into(), uv: [1.0, 1.0].into() },
-                types::Vertex { position: [-0.5, 0.5, 0.5].into(), normal: [0.0, 0.0, 1.0].into(), uv: [0.0, 1.0].into() },
+                types::Vertex {
+                    position: [-0.5, -0.5, 0.5].into(),
+                    normal: [0.0, 0.0, 1.0].into(),
+                    uv: [0.0, 0.0].into(),
+                },
+                types::Vertex {
+                    position: [0.5, -0.5, 0.5].into(),
+                    normal: [0.0, 0.0, 1.0].into(),
+                    uv: [1.0, 0.0].into(),
+                },
+                types::Vertex {
+                    position: [0.5, 0.5, 0.5].into(),
+                    normal: [0.0, 0.0, 1.0].into(),
+                    uv: [1.0, 1.0].into(),
+                },
+                types::Vertex {
+                    position: [-0.5, 0.5, 0.5].into(),
+                    normal: [0.0, 0.0, 1.0].into(),
+                    uv: [0.0, 1.0].into(),
+                },
                 // -X
-                types::Vertex { position: [-0.5, -0.5, -0.5].into(), normal: [-1.0, 0.0, 0.0].into(), uv: [0.0, 0.0].into() },
-                types::Vertex { position: [-0.5, 0.5, -0.5].into(), normal: [-1.0, 0.0, 0.0].into(), uv: [1.0, 0.0].into() },
-                types::Vertex { position: [-0.5, 0.5, 0.5].into(), normal: [-1.0, 0.0, 0.0].into(), uv: [1.0, 1.0].into() },
-                types::Vertex { position: [-0.5, -0.5, 0.5].into(), normal: [-1.0, 0.0, 0.0].into(), uv: [0.0, 1.0].into() },
+                types::Vertex {
+                    position: [-0.5, -0.5, -0.5].into(),
+                    normal: [-1.0, 0.0, 0.0].into(),
+                    uv: [0.0, 0.0].into(),
+                },
+                types::Vertex {
+                    position: [-0.5, 0.5, -0.5].into(),
+                    normal: [-1.0, 0.0, 0.0].into(),
+                    uv: [1.0, 0.0].into(),
+                },
+                types::Vertex {
+                    position: [-0.5, 0.5, 0.5].into(),
+                    normal: [-1.0, 0.0, 0.0].into(),
+                    uv: [1.0, 1.0].into(),
+                },
+                types::Vertex {
+                    position: [-0.5, -0.5, 0.5].into(),
+                    normal: [-1.0, 0.0, 0.0].into(),
+                    uv: [0.0, 1.0].into(),
+                },
                 // +X
-                types::Vertex { position: [0.5, -0.5, -0.5].into(), normal: [1.0, 0.0, 0.0].into(), uv: [0.0, 0.0].into() },
-                types::Vertex { position: [0.5, 0.5, -0.5].into(), normal: [1.0, 0.0, 0.0].into(), uv: [1.0, 0.0].into() },
-                types::Vertex { position: [0.5, 0.5, 0.5].into(), normal: [1.0, 0.0, 0.0].into(), uv: [1.0, 1.0].into() },
-                types::Vertex { position: [0.5, -0.5, 0.5].into(), normal: [1.0, 0.0, 0.0].into(), uv: [0.0, 1.0].into() },
+                types::Vertex {
+                    position: [0.5, -0.5, -0.5].into(),
+                    normal: [1.0, 0.0, 0.0].into(),
+                    uv: [0.0, 0.0].into(),
+                },
+                types::Vertex {
+                    position: [0.5, 0.5, -0.5].into(),
+                    normal: [1.0, 0.0, 0.0].into(),
+                    uv: [1.0, 0.0].into(),
+                },
+                types::Vertex {
+                    position: [0.5, 0.5, 0.5].into(),
+                    normal: [1.0, 0.0, 0.0].into(),
+                    uv: [1.0, 1.0].into(),
+                },
+                types::Vertex {
+                    position: [0.5, -0.5, 0.5].into(),
+                    normal: [1.0, 0.0, 0.0].into(),
+                    uv: [0.0, 1.0].into(),
+                },
                 // -Y
-                types::Vertex { position: [-0.5, -0.5, -0.5].into(), normal: [0.0, -1.0, 0.0].into(), uv: [0.0, 0.0].into() },
-                types::Vertex { position: [0.5, -0.5, -0.5].into(), normal: [0.0, -1.0, 0.0].into(), uv: [1.0, 0.0].into() },
-                types::Vertex { position: [0.5, -0.5, 0.5].into(), normal: [0.0, -1.0, 0.0].into(), uv: [1.0, 1.0].into() },
-                types::Vertex { position: [-0.5, -0.5, 0.5].into(), normal: [0.0, -1.0, 0.0].into(), uv: [0.0, 1.0].into() },
+                types::Vertex {
+                    position: [-0.5, -0.5, -0.5].into(),
+                    normal: [0.0, -1.0, 0.0].into(),
+                    uv: [0.0, 0.0].into(),
+                },
+                types::Vertex {
+                    position: [0.5, -0.5, -0.5].into(),
+                    normal: [0.0, -1.0, 0.0].into(),
+                    uv: [1.0, 0.0].into(),
+                },
+                types::Vertex {
+                    position: [0.5, -0.5, 0.5].into(),
+                    normal: [0.0, -1.0, 0.0].into(),
+                    uv: [1.0, 1.0].into(),
+                },
+                types::Vertex {
+                    position: [-0.5, -0.5, 0.5].into(),
+                    normal: [0.0, -1.0, 0.0].into(),
+                    uv: [0.0, 1.0].into(),
+                },
                 // +Y
-                types::Vertex { position: [-0.5, 0.5, -0.5].into(), normal: [0.0, 1.0, 0.0].into(), uv: [0.0, 0.0].into() },
-                types::Vertex { position: [0.5, 0.5, -0.5].into(), normal: [0.0, 1.0, 0.0].into(), uv: [1.0, 0.0].into() },
-                types::Vertex { position: [0.5, 0.5, 0.5].into(), normal: [0.0, 1.0, 0.0].into(), uv: [1.0, 1.0].into() },
-                types::Vertex { position: [-0.5, 0.5, 0.5].into(), normal: [0.0, 1.0, 0.0].into(), uv: [0.0, 1.0].into() },
+                types::Vertex {
+                    position: [-0.5, 0.5, -0.5].into(),
+                    normal: [0.0, 1.0, 0.0].into(),
+                    uv: [0.0, 0.0].into(),
+                },
+                types::Vertex {
+                    position: [0.5, 0.5, -0.5].into(),
+                    normal: [0.0, 1.0, 0.0].into(),
+                    uv: [1.0, 0.0].into(),
+                },
+                types::Vertex {
+                    position: [0.5, 0.5, 0.5].into(),
+                    normal: [0.0, 1.0, 0.0].into(),
+                    uv: [1.0, 1.0].into(),
+                },
+                types::Vertex {
+                    position: [-0.5, 0.5, 0.5].into(),
+                    normal: [0.0, 1.0, 0.0].into(),
+                    uv: [0.0, 1.0].into(),
+                },
             ],
             indices: vec![
                 0, 1, 2, 0, 2, 3, // -Z
@@ -296,9 +396,18 @@ impl AssetServer {
         }
 
         // --- Fallback Texture (a 1x1 white pixel) ---
-        let fallback_image = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 255, 255, 255])));
+        let fallback_image = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            1,
+            1,
+            image::Rgba([255, 255, 255, 255]),
+        ));
         let fallback_texture_id = self.next_texture_id.fetch_add(1, Ordering::Relaxed);
-        if self.upload_texture_to_gpu(fallback_texture_id, &fallback_image, queue, "fallback_texture") {
+        if self.upload_texture_to_gpu(
+            fallback_texture_id,
+            &fallback_image,
+            queue,
+            "fallback_texture",
+        ) {
             self.fallback_gpu_texture = self.textures.get(&fallback_texture_id).cloned();
         }
     }
@@ -336,23 +445,43 @@ impl AssetServer {
 
             if !already_loading {
                 let id = match request.kind {
-                    AssetType::Mesh => self.mesh_id_free_list.pop().unwrap_or_else(|| self.next_mesh_id.fetch_add(1, Ordering::Relaxed)),
-                    AssetType::Texture => self.texture_id_free_list.pop().unwrap_or_else(|| self.next_texture_id.fetch_add(1, Ordering::Relaxed)),
+                    AssetType::Mesh => self
+                        .mesh_id_free_list
+                        .pop()
+                        .unwrap_or_else(|| self.next_mesh_id.fetch_add(1, Ordering::Relaxed)),
+                    AssetType::Texture => self
+                        .texture_id_free_list
+                        .pop()
+                        .unwrap_or_else(|| self.next_texture_id.fetch_add(1, Ordering::Relaxed)),
                 };
-                
+
                 // We generate a temporary token here. The real token will be for the batch.
                 let temp_token = self.next_load_token.fetch_add(1, Ordering::Relaxed);
 
                 match request.kind {
                     AssetType::Mesh => {
-                        self.mesh_load_state.insert(request.name.clone(), LoadingStatus::Loading { id, token: temp_token });
+                        self.mesh_load_state.insert(
+                            request.name.clone(),
+                            LoadingStatus::Loading {
+                                id,
+                                token: temp_token,
+                            },
+                        );
                         let handle = MeshHandle(id);
-                        self.mesh_name_to_handle.insert(request.name.clone(), handle);
+                        self.mesh_name_to_handle
+                            .insert(request.name.clone(), handle);
                     }
                     AssetType::Texture => {
-                        self.texture_load_state.insert(request.name.clone(), LoadingStatus::Loading { id, token: temp_token });
+                        self.texture_load_state.insert(
+                            request.name.clone(),
+                            LoadingStatus::Loading {
+                                id,
+                                token: temp_token,
+                            },
+                        );
                         let handle = TextureHandle(id);
-                        self.texture_name_to_handle.insert(request.name.clone(), handle);
+                        self.texture_name_to_handle
+                            .insert(request.name.clone(), handle);
                     }
                 }
                 new_requests.push(AssetRequest {
@@ -364,17 +493,21 @@ impl AssetServer {
 
         if !new_requests.is_empty() {
             let batch_token = self.next_load_token.fetch_add(1, Ordering::Relaxed);
-            
+
             // Update all the new requests to use the same batch token
             for request in &new_requests {
-                 match request.kind {
+                match request.kind {
                     AssetType::Mesh => {
-                        if let Some(LoadingStatus::Loading { id, token }) = self.mesh_load_state.get_mut(&request.name) {
+                        if let Some(LoadingStatus::Loading { id: _, token }) =
+                            self.mesh_load_state.get_mut(&request.name)
+                        {
                             *token = batch_token;
                         }
                     }
                     AssetType::Texture => {
-                         if let Some(LoadingStatus::Loading { id, token }) = self.texture_load_state.get_mut(&request.name) {
+                        if let Some(LoadingStatus::Loading { id: _, token }) =
+                            self.texture_load_state.get_mut(&request.name)
+                        {
                             *token = batch_token;
                         }
                     }
@@ -385,7 +518,11 @@ impl AssetServer {
                 assets: new_requests,
                 token: batch_token,
             };
-            self.asset_load_request_sender.as_ref().unwrap().send(request).unwrap();
+            self.asset_load_request_sender
+                .as_ref()
+                .unwrap()
+                .send(request)
+                .unwrap();
         }
     }
 
@@ -405,8 +542,20 @@ impl AssetServer {
         let vertex_data = bytemuck::cast_slice(&vertices);
         let index_data = bytemuck::cast_slice(&cpu_mesh.indices);
 
-        let Some(vertex_alloc) = self.mesh_pool.vertex_allocator.allocate(vertex_data.len() as u32) else { return false; };
-        let Some(index_alloc) = self.mesh_pool.index_allocator.allocate(index_data.len() as u32) else { return false; };
+        let Some(vertex_alloc) = self
+            .mesh_pool
+            .vertex_allocator
+            .allocate(vertex_data.len() as u32)
+        else {
+            return false;
+        };
+        let Some(index_alloc) = self
+            .mesh_pool
+            .index_allocator
+            .allocate(index_data.len() as u32)
+        else {
+            return false;
+        };
 
         queue.write_buffer(
             &self.mesh_pool.vertex_buffer,
@@ -431,7 +580,8 @@ impl AssetServer {
         self.meshes.insert(id, gpu_mesh);
         self.mesh_name_to_handle
             .insert(cpu_mesh.name.clone(), handle);
-        self.mesh_allocations.insert(id, (vertex_alloc, index_alloc));
+        self.mesh_allocations
+            .insert(id, (vertex_alloc, index_alloc));
         self.mesh_ref_counts.insert(id, 0);
 
         true
@@ -456,7 +606,9 @@ impl AssetServer {
             height: dimensions.height,
             depth_or_array_layers: 1,
         };
-        let Some(texture_array_index) = self.texture_pool.free_slots.pop() else { return false; };
+        let Some(texture_array_index) = self.texture_pool.free_slots.pop() else {
+            return false;
+        };
 
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
@@ -479,60 +631,23 @@ impl AssetServer {
         );
 
         let handle = TextureHandle(id);
-        self.textures
-            .insert(id, GpuTexture { texture_array_index });
-        self.texture_name_to_handle
-            .insert(name.to_string(), handle);
+        self.textures.insert(
+            id,
+            GpuTexture {
+                texture_array_index,
+            },
+        );
+        self.texture_name_to_handle.insert(name.to_string(), handle);
         self.texture_ref_counts.insert(id, 0);
 
         true
     }
 
-    pub fn finish_loading_mesh(
+    pub fn get_or_create_material(
         &mut self,
-        name: String,
-        cpu_mesh: CpuMesh,
-        token: LoadToken,
-        queue: &wgpu::Queue,
-    ) {
-        if let Some(LoadingStatus::Loading { id, token: stored_token }) = self.mesh_load_state.get(&name) {
-            if *stored_token == token {
-                let id = *id;
-                if self.upload_mesh_to_gpu(id, &cpu_mesh, queue) {
-                    self.mesh_load_state
-                        .insert(name, LoadingStatus::Loaded(id));
-                } else {
-                    // How to handle allocation failure? For now, just remove it.
-                    self.mesh_load_state.remove(&name);
-                    self.mesh_id_free_list.push(id);
-                }
-            }
-        }
-    }
-
-    pub fn finish_loading_texture(
-        &mut self,
-        name: String,
-        image: DynamicImage,
-        token: LoadToken,
-        queue: &wgpu::Queue,
-    ) {
-        if let Some(LoadingStatus::Loading { id, token: stored_token }) = self.texture_load_state.get(&name) {
-            if *stored_token == token {
-                let id = *id;
-                let name_str = name.as_str();
-                if self.upload_texture_to_gpu(id, &image, queue, name_str) {
-                    self.texture_load_state
-                        .insert(name, LoadingStatus::Loaded(id));
-                } else {
-                    self.texture_load_state.remove(&name);
-                    self.texture_id_free_list.push(id);
-                }
-            }
-        }
-    }
-
-    pub fn get_or_create_material(&mut self, mesh_handle: MeshHandle, texture_handle: TextureHandle) -> MaterialHandle {
+        mesh_handle: MeshHandle,
+        texture_handle: TextureHandle,
+    ) -> MaterialHandle {
         let key = (mesh_handle.0, texture_handle.0);
         if let Some(handle) = self.material_lookup.get(&key) {
             return *handle;
@@ -540,7 +655,10 @@ impl AssetServer {
 
         let material_id = self.next_material_id.fetch_add(1, Ordering::Relaxed);
         let material_handle = MaterialHandle(material_id);
-        let material = Material { mesh_handle, texture_handle };
+        let material = Material {
+            mesh_handle,
+            texture_handle,
+        };
 
         self.materials.insert(material_id, material);
         self.material_ref_counts.insert(material_id, 0);
@@ -552,11 +670,17 @@ impl AssetServer {
     pub fn increment_material_ref(&mut self, material_id: u64) {
         let count = self.material_ref_counts.entry(material_id).or_insert(0);
         *count += 1;
-        
+
         if *count == 1 {
             if let Some(material) = self.materials.get(&material_id) {
-                *self.mesh_ref_counts.entry(material.mesh_handle.0).or_insert(0) += 1;
-                *self.texture_ref_counts.entry(material.texture_handle.0).or_insert(0) += 1;
+                *self
+                    .mesh_ref_counts
+                    .entry(material.mesh_handle.0)
+                    .or_insert(0) += 1;
+                *self
+                    .texture_ref_counts
+                    .entry(material.texture_handle.0)
+                    .or_insert(0) += 1;
             }
         }
     }
@@ -568,7 +692,8 @@ impl AssetServer {
                 if let Some(material) = self.materials.remove(&material_id) {
                     self.decrement_mesh_ref(material.mesh_handle.0);
                     self.decrement_texture_ref(material.texture_handle.0);
-                    self.material_lookup.remove(&(material.mesh_handle.0, material.texture_handle.0));
+                    self.material_lookup
+                        .remove(&(material.mesh_handle.0, material.texture_handle.0));
                 }
                 self.material_ref_counts.remove(&material_id);
             }
@@ -576,7 +701,7 @@ impl AssetServer {
     }
 
     // --- De-allocation now uses the free list ---
-    
+
     fn decrement_mesh_ref(&mut self, mesh_id: u64) {
         if let Some(count) = self.mesh_ref_counts.get_mut(&mesh_id) {
             *count -= 1;
@@ -591,7 +716,7 @@ impl AssetServer {
                     self.mesh_name_to_handle.remove(&gpu_mesh.name);
                 }
                 self.mesh_ref_counts.remove(&mesh_id);
-                
+
                 // **Add the ID to the free list for reuse!**
                 self.mesh_id_free_list.push(mesh_id);
             }
@@ -604,7 +729,9 @@ impl AssetServer {
             if *count == 0 {
                 // Free the texture array slot
                 if let Some(gpu_texture) = self.textures.remove(&texture_id) {
-                    self.texture_pool.free_slots.push(gpu_texture.texture_array_index);
+                    self.texture_pool
+                        .free_slots
+                        .push(gpu_texture.texture_array_index);
                 }
                 // ... (removing from texture_name_to_handle is the same)
                 let mut name_to_remove = None;
@@ -617,7 +744,7 @@ impl AssetServer {
                 if let Some(name) = name_to_remove {
                     self.texture_name_to_handle.remove(&name);
                 }
-                
+
                 self.texture_ref_counts.remove(&texture_id);
 
                 // **Add the ID to the free list for reuse!**
@@ -626,14 +753,22 @@ impl AssetServer {
         }
     }
 
-    pub fn get_vertex_buffer(&self) -> &wgpu::Buffer { &self.mesh_pool.vertex_buffer }
-    pub fn get_index_buffer(&self) -> &wgpu::Buffer { &self.mesh_pool.index_buffer }
-    pub fn get_texture_view(&self) -> &wgpu::TextureView { &self.texture_pool.view }
-    pub fn get_texture_sampler(&self) -> &wgpu::Sampler { &self.texture_pool.sampler }
-    
-    pub fn get_mesh_names(&self) -> Vec<String> { self.all_mesh_names.clone() }
-    pub fn get_texture_names(&self) -> Vec<String> { self.all_texture_names.clone() }
-    
-    pub fn get_gpu_mesh(&self, handle: MeshHandle) -> Option<&GpuMesh> { self.meshes.get(&handle.0) }
-    pub fn get_gpu_texture(&self, handle: TextureHandle) -> Option<&GpuTexture> { self.textures.get(&handle.0) }
+    pub fn get_vertex_buffer(&self) -> &wgpu::Buffer {
+        &self.mesh_pool.vertex_buffer
+    }
+    pub fn get_index_buffer(&self) -> &wgpu::Buffer {
+        &self.mesh_pool.index_buffer
+    }
+    pub fn get_texture_view(&self) -> &wgpu::TextureView {
+        &self.texture_pool.view
+    }
+    pub fn get_texture_sampler(&self) -> &wgpu::Sampler {
+        &self.texture_pool.sampler
+    }
+    pub fn get_mesh_names(&self) -> Vec<String> {
+        self.all_mesh_names.clone()
+    }
+    pub fn get_texture_names(&self) -> Vec<String> {
+        self.all_texture_names.clone()
+    }
 }

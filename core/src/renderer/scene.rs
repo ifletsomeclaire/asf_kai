@@ -30,20 +30,20 @@ pub fn prepare_and_copy_scene_data_system(
     asset_server: Res<AssetServer>,
     pipeline: Res<D3Pipeline>,
     device: Res<WgpuDevice>,
-    queue: Res<WgpuQueue>,
+    _queue: Res<WgpuQueue>,
 ) {
     let instances: Vec<InstanceGpuData> = instance_query
         .iter()
         .filter(|inst| inst.index_count != u32::MAX)
         .copied()
         .collect();
-        
+
     if instances.is_empty() {
         commands.remove_resource::<MeshBindGroup>();
         commands.remove_resource::<FrameRenderData>();
         return;
     }
-    
+
     // --- Part A: Mesh Description Data ---
     // The shader needs a buffer of MeshDescription structs. We sort the active meshes by their
     // ID to ensure the buffer we create has a predictable order. The shader will use the mesh_id
@@ -63,13 +63,16 @@ pub fn prepare_and_copy_scene_data_system(
         .map(|(_, gpu_mesh)| MeshDescription {
             index_count: gpu_mesh.index_count,
             first_index: (gpu_mesh.index_buffer_offset / std::mem::size_of::<u32>() as u64) as u32,
-            base_vertex: (gpu_mesh.vertex_buffer_offset / std::mem::size_of::<crate::ecs::model::Vertex>() as u64) as i32,
+            base_vertex: (gpu_mesh.vertex_buffer_offset
+                / std::mem::size_of::<crate::ecs::model::Vertex>() as u64)
+                as i32,
             _padding: 0,
         })
         .collect();
-        
-    let mesh_description_buffer =
-        device.0.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+
+    let mesh_description_buffer = device
+        .0
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("mesh_description_buffer"),
             contents: bytemuck::cast_slice(&mesh_descriptions),
             usage: wgpu::BufferUsages::STORAGE,
@@ -80,7 +83,9 @@ pub fn prepare_and_copy_scene_data_system(
     let remapped_instances: Vec<InstanceGpuData> = instances
         .iter()
         .filter_map(|original_instance| {
-            if let Some(dense_index) = mesh_id_to_dense_index.get(&(original_instance.mesh_id as u64)) {
+            if let Some(dense_index) =
+                mesh_id_to_dense_index.get(&(original_instance.mesh_id as u64))
+            {
                 let mut updated_instance = *original_instance;
                 updated_instance.mesh_id = *dense_index;
                 Some(updated_instance)
@@ -89,18 +94,20 @@ pub fn prepare_and_copy_scene_data_system(
             }
         })
         .collect();
-        
+
     if remapped_instances.is_empty() {
-         commands.remove_resource::<MeshBindGroup>();
-         commands.remove_resource::<FrameRenderData>();
-         return;
+        commands.remove_resource::<MeshBindGroup>();
+        commands.remove_resource::<FrameRenderData>();
+        return;
     }
 
-    let instance_buffer = device.0.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("instance_buffer"),
-        contents: bytemuck::cast_slice(&remapped_instances),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
+    let instance_buffer = device
+        .0
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("instance_buffer"),
+            contents: bytemuck::cast_slice(&remapped_instances),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
 
     // --- Part C: The "Uber" Lookup Buffer ---
     // This buffer maps a global vertex index to the specific instance it belongs to.
@@ -115,8 +122,9 @@ pub fn prepare_and_copy_scene_data_system(
         }
         total_indices += instance.index_count;
     }
-    let instance_lookup_buffer =
-        device.0.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    let instance_lookup_buffer = device
+        .0
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("instance_lookup_buffer"),
             contents: bytemuck::cast_slice(&instance_lookups),
             usage: wgpu::BufferUsages::STORAGE,
@@ -162,4 +170,4 @@ pub fn prepare_and_copy_scene_data_system(
     commands.insert_resource(FrameRenderData {
         total_indices_to_draw: total_indices,
     });
-} 
+}

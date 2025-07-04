@@ -3,11 +3,9 @@ use bytemuck::{Pod, Zeroable};
 use redb::{Database, ReadableTable};
 use std::{env, path::PathBuf};
 
-use crate::renderer::{
-    assets::{
-        AssetServer, AssetType, BatchAssetLoadRequest, LoadedAsset, LoadedAssetData, MODEL_TABLE,
-        TEXTURE_TABLE,
-    },
+use crate::renderer::assets::{
+    AssetServer, AssetType, BatchAssetLoadRequest, LoadedAsset, LoadedAssetData, MODEL_TABLE,
+    TEXTURE_TABLE,
 };
 use crossbeam_channel::unbounded;
 use types::Model as TypesModel;
@@ -82,8 +80,7 @@ pub fn spawn_asset_loader_task_system(mut asset_server: ResMut<AssetServer>) {
                         let read_txn = db.begin_read().unwrap();
                         let table = read_txn.open_table(MODEL_TABLE).unwrap();
                         for item in table.iter().unwrap().flatten() {
-                            if let Ok(model) = bincode::deserialize::<TypesModel>(item.1.value())
-                            {
+                            if let Ok(model) = bincode::deserialize::<TypesModel>(item.1.value()) {
                                 for mesh in &model.meshes {
                                     if mesh.name == request.name {
                                         results.push(LoadedAsset {
@@ -124,9 +121,7 @@ pub fn spawn_asset_loader_task_system(mut asset_server: ResMut<AssetServer>) {
 
 /// This system loads all models and textures from the database at startup.
 /// It populates the AssetServer but does not spawn any instances itself.
-pub fn initialize_asset_db_system(
-    mut asset_server: ResMut<AssetServer>,
-) {
+pub fn initialize_asset_db_system(mut asset_server: ResMut<AssetServer>) {
     println!("--- Initializing asset database ---");
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let db_path = PathBuf::from(manifest_dir)
@@ -141,7 +136,7 @@ pub fn initialize_asset_db_system(
             return;
         }
     };
-    
+
     asset_server.set_db(db);
     println!("--- Asset database initialized ---");
 }

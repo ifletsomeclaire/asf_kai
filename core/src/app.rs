@@ -10,15 +10,15 @@ use std::sync::Arc;
 use crate::{
     config::Config,
     ecs::{
+        asset_systems::{patch_instance_data_system, process_asset_loads_system},
         camera::{Camera, OrbitCamera, camera_control_system, update_camera_transform_system},
         framerate::{FrameRate, frame_rate_system},
         input::{Input, keyboard_input_system},
         model::{
-            initialize_asset_db_system, initialize_fallback_assets_system,
-            spawn_asset_loader_task_system, SpawnedEntities,
+            SpawnedEntities, initialize_asset_db_system, initialize_fallback_assets_system,
+            spawn_asset_loader_task_system,
         },
         ui::{EguiCtx, LastSize, UiState, ui_system},
-        asset_systems::{patch_instance_data_system, process_asset_loads_system},
     },
     renderer::{
         core::{WgpuDevice, WgpuQueue, WgpuRenderState, initialize_renderer},
@@ -41,14 +41,8 @@ use crate::{
 #[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
 struct Update;
 
-#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
-struct RendererInitialization;
-
 #[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
 struct Startup;
-
-#[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
-struct Shutdown;
 
 #[derive(Resource)]
 pub struct InitialSize(pub wgpu::Extent3d);
@@ -74,10 +68,14 @@ impl Custom3d {
 
         world.insert_resource(config);
         world.init_resource::<Events<ResizeEvent>>();
-        world.insert_resource(InitialSize(wgpu::Extent3d { width: 1280, height: 720, depth_or_array_layers: 1 }));
+        world.insert_resource(InitialSize(wgpu::Extent3d {
+            width: 1280,
+            height: 720,
+            depth_or_array_layers: 1,
+        }));
         world.init_resource::<OrbitCamera>();
         world.insert_resource(EguiCtx(cc.egui_ctx.clone()));
-        
+
         // --- Startup Schedule ---
         let mut startup_schedule = Schedule::new(Startup);
         startup_schedule.add_systems(
@@ -106,15 +104,29 @@ impl Custom3d {
 
         let wgpu_render_state = world.get_resource_mut::<WgpuRenderState>().unwrap();
 
-        wgpu_render_state.0.renderer.write().callback_resources.insert(tonemapping_pass);
-        wgpu_render_state.0.renderer.write().callback_resources.insert(tonemapping_bind_group);
+        wgpu_render_state
+            .0
+            .renderer
+            .write()
+            .callback_resources
+            .insert(tonemapping_pass);
+        wgpu_render_state
+            .0
+            .renderer
+            .write()
+            .callback_resources
+            .insert(tonemapping_bind_group);
 
         world.init_resource::<FrameRate>();
         world.init_resource::<UiState>();
         world.init_resource::<LastSize>();
         world.init_resource::<SpawnedEntities>();
 
-        world.spawn((Camera::default(), Transform::default(), GlobalTransform::default()));
+        world.spawn((
+            Camera::default(),
+            Transform::default(),
+            GlobalTransform::default(),
+        ));
 
         // --- Main Update Schedule ---
         let mut update_schedule = Schedule::new(Update);
@@ -130,18 +142,30 @@ impl Custom3d {
                 process_asset_loads_system,
                 patch_instance_data_system.after(process_asset_loads_system),
                 prepare_and_copy_scene_data_system.after(patch_instance_data_system),
-            ).chain(),
+            )
+                .chain(),
         );
-        update_schedule.add_systems((sync_simple_transforms, mark_dirty_trees, propagate_parent_transforms).chain());
+        update_schedule.add_systems(
+            (
+                sync_simple_transforms,
+                mark_dirty_trees,
+                propagate_parent_transforms,
+            )
+                .chain(),
+        );
         update_schedule.add_systems(
             (
                 clear_hdr_texture_system,
                 render_triangle_system.run_if(|ui_state: Res<UiState>| ui_state.render_triangle),
                 render_d3_pipeline_system.run_if(|ui_state: Res<UiState>| ui_state.render_model),
-            ).chain(),
+            )
+                .chain(),
         );
 
-        Some(Self { world, schedule: update_schedule })
+        Some(Self {
+            world,
+            schedule: update_schedule,
+        })
     }
 }
 

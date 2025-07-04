@@ -1,8 +1,8 @@
 use crate::renderer::{
-        core::{HDR_FORMAT, WgpuDevice, WgpuQueue, WgpuRenderState},
-        d3_pipeline::{DEPTH_FORMAT, DepthTexture},
-        events::ResizeEvent,
-    };
+    core::{HDR_FORMAT, WgpuDevice, WgpuQueue, WgpuRenderState},
+    d3_pipeline::{DEPTH_FORMAT, DepthTexture},
+    events::ResizeEvent,
+};
 use bevy_derive::{Deref, DerefMut};
 use bevy_ecs::{event::EventReader, prelude::*};
 use eframe::egui_wgpu::{self, CallbackTrait, wgpu};
@@ -250,7 +250,7 @@ pub fn setup_tonemapping_pass_system(
     });
 }
 
-pub fn clear_hdr_texture_system(
+pub fn _clear_hdr_texture_system(
     device: Res<WgpuDevice>,
     queue: Res<WgpuQueue>,
     hdr_texture: Res<HdrTexture>,

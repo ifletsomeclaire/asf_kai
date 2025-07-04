@@ -18,7 +18,10 @@ impl Config {
             Some(config_dir.join(Self::CONFIG_FILE))
         } else if let Ok(home) = std::env::var("USERPROFILE") {
             // Windows fallback
-            let config_dir = PathBuf::from(home).join("AppData").join("Roaming").join(Self::APP_NAME);
+            let config_dir = PathBuf::from(home)
+                .join("AppData")
+                .join("Roaming")
+                .join(Self::APP_NAME);
             Some(config_dir.join(Self::CONFIG_FILE))
         } else {
             // Final fallback - use current directory

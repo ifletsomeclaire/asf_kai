@@ -1,6 +1,7 @@
 use bevy_derive::Deref;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParam;
+use bevy_transform::prelude::GlobalTransform;
 use eframe::egui;
 
 use crate::{
@@ -84,26 +85,32 @@ pub fn ui_system(mut p: UiSystemParams) {
         // --- Texture Selection ---
         let texture_names = p.asset_server.get_texture_names();
         if p.ui_state.spawner_selected_texture.is_empty() {
-            p.ui_state.spawner_selected_texture = texture_names.first().cloned().unwrap_or_default();
+            p.ui_state.spawner_selected_texture =
+                texture_names.first().cloned().unwrap_or_default();
         }
         egui::ComboBox::from_label("Texture")
             .selected_text(p.ui_state.spawner_selected_texture.clone())
             .show_ui(ui, |ui| {
                 for name in texture_names {
-                    ui.selectable_value(&mut p.ui_state.spawner_selected_texture, name.clone(), name);
+                    ui.selectable_value(
+                        &mut p.ui_state.spawner_selected_texture,
+                        name.clone(),
+                        name,
+                    );
                 }
             });
 
         ui.separator();
 
-        if ui.button("Spawn").clicked() {
-            if !p.ui_state.spawner_selected_mesh.is_empty() && !p.ui_state.spawner_selected_texture.is_empty() {
-                p.commands.queue(SpawnInstance {
-                    transform: Default::default(),
-                    mesh_name: p.ui_state.spawner_selected_mesh.clone(),
-                    texture_name: p.ui_state.spawner_selected_texture.clone(),
-                });
-            }
+        if ui.button("Spawn").clicked()
+            && !p.ui_state.spawner_selected_mesh.is_empty()
+            && !p.ui_state.spawner_selected_texture.is_empty()
+        {
+            p.commands.queue(SpawnInstance {
+                transform: GlobalTransform::default(),
+                mesh_name: p.ui_state.spawner_selected_mesh.clone(),
+                texture_name: p.ui_state.spawner_selected_texture.clone(),
+            });
         }
 
         if ui.button("Despawn Last").clicked() {
