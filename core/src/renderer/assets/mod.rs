@@ -7,7 +7,7 @@ use bevy_ecs::{
     world::{FromWorld, World},
 };
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Mat4, Vec3};
 use redb::{ReadableTable, ReadableTableMetadata};
 use types::{AABB, Model, Vertex, MODEL_TABLE, TEXTURE_TABLE};
 use wgpu::util::DeviceExt;
@@ -17,7 +17,7 @@ use crate::renderer::core::WgpuDevice;
 // Static asset data describing a slice of the geometry buffers.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
-struct MeshletDescription {
+pub struct MeshletDescription {
     vertex_list_offset: u32,
     triangle_list_offset: u32,
     triangle_count: u32,
@@ -42,7 +42,6 @@ pub struct AssetServer {
     pub meshlets: Vec<MeshletDescription>,
     pub transforms: Vec<Mat4>,
     pub draw_commands: Vec<DrawCommand>,
-    pub texture_map: std::collections::HashMap<String, u32>,
     pub texture_cpu_data: Vec<image::DynamicImage>,
 
 
@@ -221,7 +220,7 @@ pub fn new(world: &mut World) -> AssetServer {
         meshlets: all_meshlets,
         transforms,
         draw_commands,
-        texture_map,
+ 
         texture_cpu_data,
         vertex_buffer: None,
         meshlet_vertex_index_buffer: None,
@@ -234,8 +233,8 @@ pub fn new(world: &mut World) -> AssetServer {
         mesh_bind_group_layout: None,
         mesh_bind_group: None,
     };
-    let device = world.resource::<WgpuDevice>().clone();
-    let queue = world.resource::<crate::renderer::core::WgpuQueue>().clone();
+    let device = world.resource::<WgpuDevice>();
+    let queue = world.resource::<crate::renderer::core::WgpuQueue>();
     create_gpu_resources(&mut asset_server, &device, &queue);
     asset_server
 }
@@ -280,7 +279,7 @@ fn create_gpu_resources(
             .to_rgba8();
         let (width, height) = rgba_image.dimensions();
         queue.0.write_texture(
-            wgpu::ImageCopyTexture {
+            wgpu::TexelCopyTextureInfo{
                 texture: &texture_array,
                 mip_level: 0,
                 origin: wgpu::Origin3d {
@@ -291,7 +290,7 @@ fn create_gpu_resources(
                 aspect: wgpu::TextureAspect::All,
             },
             &rgba_image,
-            wgpu::ImageDataLayout {
+            wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4 * width),
                 rows_per_image: Some(height),

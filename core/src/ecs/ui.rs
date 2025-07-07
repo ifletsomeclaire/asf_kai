@@ -1,7 +1,6 @@
 use bevy_derive::Deref;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParam;
-use bevy_transform::prelude::GlobalTransform;
 use eframe::egui;
 
 use crate::{

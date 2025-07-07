@@ -2,7 +2,7 @@ use bevy_ecs::prelude::*;
 use std::num::NonZeroU64;
 use wgpu::util::DeviceExt;
 
-use crate::renderer::core::{HDR_FORMAT, WgpuDevice, WgpuQueue, WgpuRenderState};
+use crate::renderer::core::{HDR_FORMAT, WgpuDevice, WgpuQueue};
 
 use super::tonemapping::HdrTexture;
 
