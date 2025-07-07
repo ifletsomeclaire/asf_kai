@@ -136,9 +136,10 @@ impl ModelDatabase {
                                             .into_iter(),
                                     )
                                     .map(|((v, n), uv)| types::Vertex {
-                                        position: glam::vec3(v.x, v.y, v.z),
-                                        normal: glam::vec3(n.x, n.y, n.z),
+                                        position: glam::vec4(v.x, v.y, v.z, 1.0),
+                                        normal: glam::vec4(n.x, n.y, n.z, 0.0),
                                         uv: glam::vec2(uv.x, 1.0 - uv.y),
+                                        _padding: [0.0; 2],
                                     })
                                     .collect();
                                 let indices: Vec<u32> =

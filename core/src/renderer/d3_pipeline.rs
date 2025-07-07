@@ -1,8 +1,9 @@
 use bevy_ecs::{
-    prelude::{Res, ResMut},
+    prelude::{Res, ResMut, Query},
     system::{Commands, NonSend},
     world::World,
 };
+use bevy_transform::components::GlobalTransform;
 use glam::Mat4;
 use wgpu::{include_wgsl, util::DeviceExt, PipelineCompilationOptions};
 
@@ -114,23 +115,30 @@ pub fn render_d3_pipeline_system(
     asset_server: Res<AssetServer>,
     depth_texture: Res<DepthTexture>,
     hdr_texture: Res<HdrTexture>,
+    camera_query: Query<(&Camera, &GlobalTransform)>,
     mut commands: Commands,
 ) {
+    // If the mesh bind group doesn't exist on the asset server, it's because
+    // no renderable meshlets were loaded. In this case, there is nothing
+    // for this pipeline to draw, so we return early.
+    if asset_server.mesh_bind_group.is_none() {
+        return;
+    }
+
+    // Try to get the camera's data. If it doesn't exist, we can't render.
+    let Ok((camera, transform)) = camera_query.get_single() else {
+        return;
+    };
+
     let pipeline = D3Pipeline::new(
         &device,
         &asset_server,
         wgpu::TextureFormat::Rgba16Float, // HDR format
     );
 
-    // Create a simple camera view
-    let camera_position = glam::Vec3::new(5.0, 5.0, 5.0);
-    let view = Mat4::look_at_rh(camera_position, glam::Vec3::ZERO, glam::Vec3::Y);
-    let proj = Mat4::perspective_rh(
-        (45.0f32).to_radians(),
-        hdr_texture.size.width as f32 / hdr_texture.size.height as f32,
-        0.1,
-        100.0,
-    );
+    // Create the camera view-projection matrix using the live camera data
+    let view = transform.compute_matrix().inverse();
+    let proj = camera.projection_matrix();
     let view_proj = proj * view;
 
     let camera_uniform_buffer =
@@ -187,8 +195,8 @@ pub fn render_d3_pipeline_system(
 
         render_pass.set_pipeline(&pipeline.pipeline);
         render_pass.set_bind_group(0, &camera_bind_group, &[]);
-        render_pass
-            .set_bind_group(1, asset_server.mesh_bind_group.as_ref().unwrap(), &[]);
+        render_pass.set_bind_group(1, asset_server.mesh_bind_group.as_ref().unwrap(), &[]);
+        // Draw all the meshlets.
         render_pass.draw(
             0..(128 * 3), // Max triangles * 3
             0..asset_server.draw_commands.len() as u32,

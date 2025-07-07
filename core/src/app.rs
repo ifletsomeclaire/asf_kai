@@ -56,6 +56,7 @@ pub struct Custom3d {
 
 impl Custom3d {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Option<Self> {
+        println!("--- Creating Custom3d ---");
         let wgpu_render_state = cc.wgpu_render_state.as_ref()?;
         let config: Config = Default::default();
 
@@ -77,7 +78,7 @@ impl Custom3d {
         }));
         world.init_resource::<OrbitCamera>();
         world.init_resource::<AssetServer>();
-        // world.insert_resource(EguiCtx(cc.egui_ctx.clone()));
+        world.insert_resource(EguiCtx(cc.egui_ctx.clone()));
 
         // --- Startup Schedule ---
         let mut startup_schedule = Schedule::new(Startup);
@@ -121,8 +122,8 @@ impl Custom3d {
             .insert(tonemapping_bind_group);
 
         world.init_resource::<FrameRate>();
-        // world.init_resource::<UiState>();
-        // world.init_resource::<LastSize>();
+        world.init_resource::<UiState>();
+        world.init_resource::<LastSize>();
         // world.init_resource::<SpawnedEntities>();
 
         world.spawn((

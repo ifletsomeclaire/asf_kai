@@ -7,6 +7,7 @@ use eframe::egui;
 use crate::{
     config::Config,
     ecs::{
+        camera::{Camera, OrbitCamera},
         // commands::{DespawnInstance, SpawnInstance},
         framerate::FrameRate,
         // model::SpawnedEntities,
@@ -48,6 +49,8 @@ pub struct UiSystemParams<'w, 's> {
     config: ResMut<'w, Config>,
     frame_rate: Res<'w, FrameRate>,
     events: EventWriter<'w, ResizeEvent>,
+    orbit_camera: Res<'w, OrbitCamera>,
+    camera_query: Query<'w, 's, &'static Camera>,
     // --- For Spawner ---
     commands: Commands<'w, 's>,
     asset_server: Res<'w, AssetServer>,
@@ -65,6 +68,21 @@ pub fn ui_system(mut p: UiSystemParams) {
         if ui.checkbox(&mut p.config.vsync, "V-Sync").changed() {
             p.config.save();
             ui.label("(Requires restart)");
+        }
+    });
+
+    egui::Window::new("Camera").show(ctx, |ui| {
+        if let Ok(camera) = p.camera_query.get_single() {
+            ui.label(format!("Distance: {:.2}", p.orbit_camera.distance));
+            ui.label(format!("Yaw: {:.2}", p.orbit_camera.yaw.to_degrees()));
+            ui.label(format!("Pitch: {:.2}", p.orbit_camera.pitch.to_degrees()));
+            ui.label(format!("Target: {:.2?}", p.orbit_camera.target));
+            ui.label(format!("Pan: {:.2?}", p.orbit_camera.pan));
+            ui.separator();
+            ui.label(format!("Near Plane (znear): {:.2}", camera.znear));
+            ui.label(format!("Far Plane (zfar): {:.2}", camera.zfar));
+        } else {
+            ui.label("Camera not found.");
         }
     });
 

@@ -11,7 +11,7 @@ struct MeshletDescription {
     vertex_list_offset: u32,
     triangle_list_offset: u32,
     triangle_count: u32,
-    _padding: u32,
+    vertex_count: u32,
 };
 
 // Dynamic per-frame command telling the GPU what to draw.
@@ -51,7 +51,13 @@ fn vs_main(
     @builtin(instance_index) instance_id: u32, // The index of the draw command we're executing.
     @builtin(vertex_index) local_vtx_id: u32   // The index of the vertex within this meshlet's triangles.
 ) -> VSOutput {
+    // Initialize output to default values to satisfy WGSL's requirement that
+    // all `var`s must be initialized before a function returns. This prevents
+    // undefined behavior from returning a partially-initialized struct.
     var output: VSOutput;
+    output.clip_position = vec4<f32>(2.0, 2.0, 2.0, 1.0); // Outside clip space
+    output.world_normal = vec3<f32>(0.0, 0.0, 0.0);
+    output.uv = vec2<f32>(0.0, 0.0);
 
     // 1. Fetch the draw command for this instance.
     let command = indirection_buffer[instance_id];
@@ -60,22 +66,22 @@ fn vs_main(
     let meshlet = meshlet_descriptions[command.meshlet_id];
 
     // 3. Cull padded vertices. If the vertex index is beyond the actual number of
-    //    indices in the meshlet, push it outside the visible clip space and exit early.
-    //    The GPU will discard these vertices.
+    //    indices in the meshlet, return the default "outside clip space" vertex.
     if (local_vtx_id >= meshlet.triangle_count * 3u) {
-        output.clip_position = vec4<f32>(2.0, 2.0, 2.0, 1.0);
         return output;
     }
 
     // 4. Perform the two-level index lookup.
     
-    // First, find the local `u8` index for this vertex. Since we packed four u8s into
-    // each u32 on the CPU, we need to find which u32 contains our index and then
-    // extract the correct byte from it.
-    let packed_indices_offset = meshlet.triangle_list_offset / 4u;
-    let index_in_u32 = local_vtx_id % 4u;
-    let packed_indices = meshlet_triangle_indices[packed_indices_offset + (local_vtx_id / 4u)];
-    let local_vertex_index_in_meshlet = (packed_indices >> (index_in_u32 * 8u)) & 0xFFu;
+    // First, calculate the absolute byte offset for the vertex index we need.
+    let total_byte_offset = meshlet.triangle_list_offset + local_vtx_id;
+
+    // Then, use that absolute offset to find the correct u32 in the packed buffer
+    // and the correct byte within that u32.
+    let u32_index = total_byte_offset / 4u;
+    let byte_in_u32 = total_byte_offset % 4u;
+    let packed_indices = meshlet_triangle_indices[u32_index];
+    let local_vertex_index_in_meshlet = (packed_indices >> (byte_in_u32 * 8u)) & 0xFFu;
 
     // Second, use that local index to look up the global vertex index. This points
     // into the main `vertices` buffer.

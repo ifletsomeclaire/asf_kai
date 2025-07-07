@@ -1,4 +1,4 @@
-use glam::{Vec2, Vec3};
+use glam::{Vec2, Vec4};
 use redb::TableDefinition;
 use serde::{Deserialize, Serialize};
 
@@ -10,9 +10,10 @@ pub const TEXTURE_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("te
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct Vertex {
-    pub position: Vec3,
-    pub normal: Vec3,
+    pub position: Vec4,
+    pub normal: Vec4,
     pub uv: Vec2,
+    pub _padding: [f32; 2],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

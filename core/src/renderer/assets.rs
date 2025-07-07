@@ -1,7 +1,7 @@
 use bevy_ecs::{world::{FromWorld, World}, prelude::Resource};
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
-use redb::ReadableTable;
+use redb::{ReadableTable, ReadableTableMetadata};
 use types::{MODEL_TABLE, Model, Vertex};
 use wgpu::util::DeviceExt;
 
@@ -14,7 +14,7 @@ struct MeshletDescription {
     vertex_list_offset: u32,
     triangle_list_offset: u32,
     triangle_count: u32,
-    _padding: u32,
+    vertex_count: u32,
 }
 
 #[repr(C)]
@@ -53,30 +53,43 @@ impl FromWorld for AssetServer {
 }
 
 pub fn new(world: &mut World) -> AssetServer {
-    let db = redb::Database::open("/Users/mewosmith/rust/asf_kai/database/models.redb").unwrap();
+    let db = redb::Database::open("/Users/mewosmith/rust/asf_kai/assets/models.redb").unwrap();
     let read_txn = db.begin_read().unwrap();
     let table = read_txn.open_table(MODEL_TABLE).unwrap();
-
+    println!("table length: {:?}", table.len());
     let mut all_vertices = Vec::new();
     let mut all_meshlet_vertex_indices = Vec::new();
     let mut all_meshlet_triangle_indices = Vec::new();
     let mut all_meshlets = Vec::new();
+    let mut has_printed_debug_info = false;
+
+    println!("[Asset Loading] Starting model processing...");
+    let mut models_processed = 0;
+    let mut meshes_with_meshlets = 0;
 
     for result in table.iter().unwrap() {
-        let (_name, model_data) = result.unwrap();
+        let (name_bytes, model_data) = result.unwrap();
+        let name = name_bytes.value();
+        models_processed += 1;
+        println!("[Asset Loading] Processing model: {}", name);
+
         let model: Model = bincode::deserialize(model_data.value()).unwrap();
 
         for mesh in model.meshes {
             if let Some(mesh_meshlets) = mesh.meshlets {
+                meshes_with_meshlets += 1;
+                println!(
+                    "  -> Mesh '{}' HAS meshlets. Adding to buffers.",
+                    mesh.name
+                );
                 let vertex_base = all_vertices.len() as u32;
                 let meshlet_vertex_index_base = all_meshlet_vertex_indices.len() as u32;
-                let meshlet_triangle_index_base = all_meshlet_triangle_indices.len() as u32;
 
                 // 1. Add this mesh's vertices to the global buffer.
                 all_vertices.extend_from_slice(&mesh.vertices);
 
-                // 2. Remap the meshlet's vertex indices to point into the global vertex
-                //    buffer, then add them to the global meshlet vertex index buffer.
+                // 2. The meshlet's `vertices` are indices into the mesh's vertex buffer.
+                //    We remap them to point into the global vertex buffer.
                 let remapped_vertex_indices: Vec<u32> = mesh_meshlets
                     .vertices
                     .iter()
@@ -84,27 +97,95 @@ pub fn new(world: &mut World) -> AssetServer {
                     .collect();
                 all_meshlet_vertex_indices.extend(remapped_vertex_indices);
 
-                // 3. Add the meshlet's local triangle indices to the global buffer.
+                // 3. The meshlet's `triangles` are u8 indices into its *own* vertex list
+                //    (the one we just remapped). We can append these directly.
+                //    The `triangle_offset` in the meshlet description will be relative
+                //    to the start of this mesh's triangle data.
+                let triangle_base = all_meshlet_triangle_indices.len() as u32;
                 all_meshlet_triangle_indices.extend(&mesh_meshlets.triangles);
 
                 // 4. Create descriptions for each meshlet with offsets into the global buffers.
-                for m in mesh_meshlets.meshlets {
-                    all_meshlets.push(MeshletDescription {
-                        // The offset to the list of vertex indices for this meshlet inside the
-                        // global `meshlet_vertex_indices` buffer.
+                for m in &mesh_meshlets.meshlets {
+                    let desc = MeshletDescription {
+                        // The offset to the list of vertex indices for this meshlet.
                         vertex_list_offset: meshlet_vertex_index_base + m.vertex_offset,
 
                         // The offset to the list of triangle indices for this meshlet.
-                        // meshopt gives an offset in triangles, so we x3 for indices.
-                        triangle_list_offset: meshlet_triangle_index_base + m.triangle_offset * 3,
+                        // This is relative to the start of the mesh's triangle data.
+                        triangle_list_offset: triangle_base + m.triangle_offset,
 
                         triangle_count: m.triangle_count,
-                        _padding: 0,
-                    });
+                        vertex_count: m.vertex_count,
+                    };
+                    all_meshlets.push(desc);
+
+                    if !has_printed_debug_info {
+                        println!("\n--- MESHLET DEBUG DUMP (First Meshlet) ---");
+                        println!("Mesh Name: {}", mesh.name);
+                        println!("[Raw Meshlet Data from meshopt]");
+                        println!("  - vertex_offset: {}", m.vertex_offset);
+                        println!("  - triangle_offset: {}", m.triangle_offset);
+                        println!("  - vertex_count: {}", m.vertex_count);
+                        println!("  - triangle_count: {}", m.triangle_count);
+                        println!("[Generated MeshletDescription for GPU]");
+                        println!("  - vertex_list_offset: {}", desc.vertex_list_offset);
+                        println!("  - triangle_list_offset: {}", desc.triangle_list_offset);
+                        println!("  - triangle_count: {}", desc.triangle_count);
+                        println!("  - vertex_count: {}", desc.vertex_count);
+
+                        let tri_start = (triangle_base + m.triangle_offset) as usize;
+                        let first_tri_indices =
+                            &all_meshlet_triangle_indices[tri_start..tri_start + 3];
+                        println!("[First Triangle's Local Indices (from GLOBAL triangles buffer)]");
+                        println!(
+                            "  - Raw u8 values: [{}, {}, {}]",
+                            first_tri_indices[0], first_tri_indices[1], first_tri_indices[2]
+                        );
+
+                        let vert_start = m.vertex_offset as usize;
+                        let local_vtx_idx_1 = first_tri_indices[0] as usize;
+                        let local_vtx_idx_2 = first_tri_indices[1] as usize;
+                        let local_vtx_idx_3 = first_tri_indices[2] as usize;
+
+                        let global_vtx_ptr_1 = mesh_meshlets.vertices[vert_start + local_vtx_idx_1];
+                        let global_vtx_ptr_2 = mesh_meshlets.vertices[vert_start + local_vtx_idx_2];
+                        let global_vtx_ptr_3 = mesh_meshlets.vertices[vert_start + local_vtx_idx_3];
+
+                        println!("[Vertex Remapping (from vertices buffer)]");
+                        println!(
+                            "  - Local idx {} -> Pointer to Global Vertex {}",
+                            local_vtx_idx_1, global_vtx_ptr_1
+                        );
+                        println!(
+                            "  - Local idx {} -> Pointer to Global Vertex {}",
+                            local_vtx_idx_2, global_vtx_ptr_2
+                        );
+                        println!(
+                            "  - Local idx {} -> Pointer to Global Vertex {}",
+                            local_vtx_idx_3, global_vtx_ptr_3
+                        );
+
+                        let final_vtx_1 = mesh.vertices[global_vtx_ptr_1 as usize];
+                        let final_vtx_2 = mesh.vertices[global_vtx_ptr_2 as usize];
+                        let final_vtx_3 = mesh.vertices[global_vtx_ptr_3 as usize];
+                        println!("[Final Vertex Positions (from mesh's vertex buffer)]");
+                        println!("  - Vertex 1: {:?}", final_vtx_1.position);
+                        println!("  - Vertex 2: {:?}", final_vtx_2.position);
+                        println!("  - Vertex 3: {:?}", final_vtx_3.position);
+                        println!("----------------------------------------\n");
+                        has_printed_debug_info = true;
+                    }
                 }
+            } else {
+                println!(
+                    "  -> Mesh '{}' does NOT have meshlets. Skipping.",
+                    mesh.name
+                );
             }
         }
     }
+
+    println!("[Asset Loading] Summary: {} models processed, {} meshes with meshlets found.", models_processed, meshes_with_meshlets);
 
     let transforms = vec![glam::Mat4::IDENTITY];
     let draw_commands: Vec<DrawCommand> = (0..all_meshlets.len())
@@ -135,6 +216,13 @@ pub fn new(world: &mut World) -> AssetServer {
 }
 
 fn create_gpu_resources(asset_server: &mut AssetServer, device: &wgpu::Device) {
+    // If no vertices were loaded (e.g., no models with meshlets were found),
+    // we cannot create valid GPU buffers. We will return early, and the render
+    // system will check for this case and skip drawing.
+    if asset_server.vertices.is_empty() {
+        return;
+    }
+
     // Create buffers for all the geometry data
     asset_server.vertex_buffer = Some(device.create_buffer_init(
         &wgpu::util::BufferInitDescriptor {
@@ -158,9 +246,14 @@ fn create_gpu_resources(asset_server: &mut AssetServer, device: &wgpu::Device) {
     while padded_triangle_indices.len() % 4 != 0 {
         padded_triangle_indices.push(0);
     }
-    let packed_triangle_indices: Vec<u32> = bytemuck::cast_slice(&padded_triangle_indices)
-        .iter()
-        .copied()
+
+    // The `bytemuck::cast_slice` can panic if the byte slice is not aligned to
+    // 4 bytes. To fix this, we manually and safely construct each u32 from
+    // its 4 constituent bytes, which guarantees correctness regardless of the
+    // underlying memory alignment.
+    let packed_triangle_indices: Vec<u32> = padded_triangle_indices
+        .chunks_exact(4)
+        .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
         .collect();
 
     asset_server.meshlet_triangle_index_buffer = Some(device.create_buffer_init(
@@ -326,4 +419,22 @@ fn create_gpu_resources(asset_server: &mut AssetServer, device: &wgpu::Device) {
             ],
         }),
     );
+
+    println!("--- Asset Server GPU Resources Created ---");
+    println!("Total Vertices: {}", asset_server.vertices.len());
+    println!(
+        "Total Meshlet Vertex Indices: {}",
+        asset_server.meshlet_vertex_indices.len()
+    );
+    println!(
+        "Total Meshlet Triangle Indices (u8): {}",
+        asset_server.meshlet_triangle_indices.len()
+    );
+    println!("Total Meshlets: {}", asset_server.meshlets.len());
+    println!("Total Transforms: {}", asset_server.transforms.len());
+    println!(
+        "Total Draw Commands: {}",
+        asset_server.draw_commands.len()
+    );
+    println!("------------------------------------------");
 }
