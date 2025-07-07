@@ -81,6 +81,42 @@ pub fn ui_system(mut p: UiSystemParams) {
             ui.separator();
             ui.label(format!("Near Plane (znear): {:.2}", camera.znear));
             ui.label(format!("Far Plane (zfar): {:.2}", camera.zfar));
+
+            ui.separator();
+            ui.label("Settings");
+
+            let mut changed = false;
+            changed |= ui
+                .add(
+                    egui::Slider::new(&mut p.config.camera.orbit_sensitivity, 0.001..=0.02)
+                        .text("Orbit Sensitivity"),
+                )
+                .changed();
+            changed |= ui
+                .add(
+                    egui::Slider::new(&mut p.config.camera.pan_sensitivity, 0.001..=0.05)
+                        .text("Pan Sensitivity"),
+                )
+                .changed();
+            changed |= ui
+                .add(
+                    egui::Slider::new(&mut p.config.camera.zoom_sensitivity, 0.01..=0.5)
+                        .text("Zoom Sensitivity"),
+                )
+                .changed();
+            changed |= ui
+                .add(
+                    egui::Slider::new(
+                        &mut p.config.camera.keyboard_pan_sensitivity,
+                        0.01..=1.0,
+                    )
+                    .text("Keyboard Pan Sensitivity"),
+                )
+                .changed();
+
+            if changed {
+                p.config.save();
+            }
         } else {
             ui.label("Camera not found.");
         }

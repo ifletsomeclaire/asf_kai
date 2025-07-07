@@ -5,7 +5,12 @@ use serde::{Deserialize, Serialize};
 pub const MODEL_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("models");
 pub const TEXTURE_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("textures");
 
-
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+#[repr(C)]
+pub struct AABB {
+    pub min: Vec4,
+    pub max: Vec4,
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
@@ -23,6 +28,7 @@ pub struct Mesh {
     pub indices: Vec<u32>,
     pub texture_name: Option<String>,
     pub meshlets: Option<Meshlets>,
+    pub aabb: AABB,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,4 +50,5 @@ pub struct Meshlets {
 pub struct Model {
     pub name: String,
     pub meshes: Vec<Mesh>,
+    pub aabb: AABB,
 }

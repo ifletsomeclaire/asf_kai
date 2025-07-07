@@ -1,14 +1,188 @@
+use std::borrow::Borrow;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use meshopt::{build_meshlets, VertexDataAdapter};
-use redb::{Database, TableDefinition};
-use russimp::material::TextureType;
-use russimp::scene::{PostProcess, Scene};
-use types::MODEL_TABLE;
-use types::TEXTURE_TABLE;
+use redb::Database;
+use russimp::material::Texture;
+use russimp::{
+    material::TextureType,
+    node::Node,
+    scene::{PostProcess, Scene},
+};
+use std::cell::Ref;
+
+use types::AABB;
 use types::{Mesh, Meshlet, Meshlets, Model};
+use types::{MODEL_TABLE, TEXTURE_TABLE};
+
+fn process_node(
+    node_rc: &Node,
+    scene: &Scene,
+    parent_transform: &glam::Mat4,
+    model_name: &str,
+    new_textures_to_add: &mut Vec<(String, Vec<u8>)>,
+) -> Vec<Mesh> {
+    let node_transform = glam::Mat4::from_cols_array(&[
+        node_rc.transformation.a1, node_rc.transformation.a2, node_rc.transformation.a3,
+        node_rc.transformation.a4, node_rc.transformation.b1, node_rc.transformation.b2,
+        node_rc.transformation.b3, node_rc.transformation.b4, node_rc.transformation.c1,
+        node_rc.transformation.c2, node_rc.transformation.c3, node_rc.transformation.c4,
+        node_rc.transformation.d1, node_rc.transformation.d2, node_rc.transformation.d3,
+        node_rc.transformation.d4,
+    ])
+    .transpose();
+    let accumulated_transform = *parent_transform * node_transform;
+
+    let mut meshes = Vec::new();
+
+    for &mesh_index in &node_rc.meshes {
+        let mesh = &scene.meshes[mesh_index as usize];
+        let material = &scene.materials[mesh.material_index as usize];
+        let mut texture_name = None;
+        let unique_mesh_name = format!("{}-mesh-{}", model_name, mesh_index);
+
+        let texture_to_use = material
+            .textures
+            .get(&TextureType::Diffuse)
+            .or_else(|| material.textures.get(&TextureType::Emissive));
+
+        if let Some(texture_ref) = texture_to_use {
+            let texture: Ref<Texture> = (&**texture_ref).borrow();
+            match &texture.data {
+                russimp::material::DataContent::Bytes(bytes) => {
+                    let texture_type_str = if material.textures.contains_key(&TextureType::Diffuse) {
+                        "diffuse"
+                    } else {
+                        "emissive"
+                    };
+                    let new_name = format!("{}_{}.png", unique_mesh_name, texture_type_str);
+
+                    new_textures_to_add.push((new_name.clone(), bytes.clone()));
+                    texture_name = Some(new_name);
+                }
+                russimp::material::DataContent::Texel(_) => {
+                    eprintln!("Found uncompressed texel data for model '{}'. This is not currently supported for embedded textures.", model_name);
+                }
+            }
+        } else {
+            for prop in &material.properties {
+                if prop.key.contains("$tex.file") {
+                    if let russimp::material::PropertyTypeInfo::String(path) = &prop.data {
+                        texture_name = Path::new(path)
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .map(String::from);
+                        if texture_name.is_some() {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        println!(
+            "[DB] Mesh: '{}' -> Found texture: {:?}",
+            unique_mesh_name, texture_name
+        );
+
+        let vertices: Vec<types::Vertex> = mesh
+            .vertices
+            .iter()
+            .zip(mesh.normals.iter())
+            .zip(
+                mesh.texture_coords[0]
+                    .clone()
+                    .unwrap_or_default()
+                    .iter(),
+            )
+            .map(|((v, n), uv)| {
+                let pos = glam::Vec3::new(v.x, v.y, v.z);
+                let normal = glam::Vec3::new(n.x, n.y, n.z);
+                let transformed_pos = accumulated_transform.transform_point3(pos);
+                let transformed_normal = accumulated_transform.transform_vector3(normal);
+
+                types::Vertex {
+                    position: transformed_pos.extend(1.0),
+                    normal: transformed_normal.extend(0.0),
+                    uv: glam::vec2(uv.x, 1.0 - uv.y),
+                    _padding: [0.0; 2],
+                }
+            })
+            .collect();
+
+        let indices: Vec<u32> = mesh.faces.iter().flat_map(|f| f.0.clone()).collect();
+
+        const MAX_VERTICES: usize = 64;
+        const MAX_TRIANGLES: usize = 128;
+
+        let vertex_stride = std::mem::size_of::<types::Vertex>();
+        let vertex_data_bytes = bytemuck::cast_slice(&vertices);
+
+        let adapter = VertexDataAdapter::new(vertex_data_bytes, vertex_stride, 0).unwrap();
+        let meshlets_result =
+            build_meshlets(&indices, &adapter, MAX_VERTICES, MAX_TRIANGLES, 0.0);
+
+        let meshlets = if !meshlets_result.meshlets.is_empty() {
+            println!(
+                "[DB] Mesh: '{}' -> Generated {} meshlets",
+                unique_mesh_name,
+                meshlets_result.meshlets.len()
+            );
+
+            let converted_meshlets = meshlets_result
+                .meshlets
+                .iter()
+                .map(|m| Meshlet {
+                    vertex_offset: m.vertex_offset,
+                    triangle_offset: m.triangle_offset,
+                    vertex_count: m.vertex_count,
+                    triangle_count: m.triangle_count,
+                })
+                .collect();
+
+            Some(Meshlets {
+                meshlets: converted_meshlets,
+                vertices: meshlets_result.vertices,
+                triangles: meshlets_result.triangles,
+            })
+        } else {
+            None
+        };
+
+        let mut mesh_aabb = AABB::default();
+        if let Some(first_vtx) = vertices.first() {
+            mesh_aabb.min = first_vtx.position;
+            mesh_aabb.max = first_vtx.position;
+            for v in vertices.iter().skip(1) {
+                mesh_aabb.min = mesh_aabb.min.min(v.position);
+                mesh_aabb.max = mesh_aabb.max.max(v.position);
+            }
+        }
+
+        meshes.push(Mesh {
+            name: unique_mesh_name,
+            vertices,
+            indices,
+            texture_name,
+            meshlets,
+            aabb: mesh_aabb,
+        });
+    }
+
+    for child_rc in node_rc.children.borrow().iter() {
+        meshes.extend(process_node(
+            child_rc,
+            scene,
+            &accumulated_transform,
+            model_name,
+            new_textures_to_add,
+        ));
+    }
+
+    meshes
+}
 
 pub struct ModelDatabase {
     db: Database,
@@ -77,134 +251,40 @@ impl ModelDatabase {
                             ],
                         )?;
 
-                        let mut new_textures_to_add = Vec::new();
+                        let mut new_textures_to_add: Vec<(String, Vec<u8>)> = Vec::new();
+                        let model_meshes = if let Some(root) = &scene.root {
+                            process_node(
+                                &root.borrow(),
+                                &scene,
+                                &glam::Mat4::IDENTITY,
+                                model_name,
+                                &mut new_textures_to_add,
+                            )
+                        } else {
+                            Vec::new()
+                        };
 
-                        let meshes = scene
-                            .meshes
-                            .into_iter()
-                            .enumerate()
-                            .map(|(i, mesh)| {
-                                let material = &scene.materials[mesh.material_index as usize];
-                                let mut texture_name = None;
-                                let unique_mesh_name = format!("{}-mesh-{}", model_name, i);
+                        let mut model_aabb = AABB::default();
+                        if let Some(first_mesh) = model_meshes.first() {
+                            model_aabb = first_mesh.aabb;
+                            for mesh in model_meshes.iter().skip(1) {
+                                model_aabb.min = model_aabb.min.min(mesh.aabb.min);
+                                model_aabb.max = model_aabb.max.max(mesh.aabb.max);
+                            }
+                        }
 
-                                // Correctly look for textures in the material's texture map.
-                                // Prioritize Diffuse, fallback to Emissive.
-                                let texture_to_use = material.textures.get(&TextureType::Diffuse)
-                                    .or_else(|| material.textures.get(&TextureType::Emissive));
+                        let new_model = Model {
+                            name: model_name.to_string(),
+                            meshes: model_meshes,
+                            aabb: model_aabb,
+                        };
 
-                                if let Some(texture_ref) = texture_to_use {
-                                    let texture = texture_ref.borrow();
-                                    // The texture.data field is an enum. We need to handle its variants.
-                                    match &texture.data {
-                                        russimp::material::DataContent::Bytes(bytes) => {
-                                            // This is the compressed data (e.g., a full PNG file in memory).
-                                            let texture_type_str = if material.textures.contains_key(&TextureType::Diffuse) { "diffuse" } else { "emissive" };
-                                            let new_name = format!("{}_{}.png", unique_mesh_name, texture_type_str);
-
-                                            new_textures_to_add.push((new_name.clone(), bytes.clone()));
-                                            texture_name = Some(new_name);
-                                        },
-                                        russimp::material::DataContent::Texel(_) => {
-                                            eprintln!("Found uncompressed texel data for model '{}'. This is not currently supported for embedded textures.", model_name);
-                                        }
-                                    }
-                                } else {
-                                    // If no embedded texture, check properties for a file path. This handles older formats.
-                                    for prop in &material.properties {
-                                        if prop.key.contains("$tex.file") {
-                                            if let russimp::material::PropertyTypeInfo::String(path) = &prop.data {
-                                                texture_name = Path::new(path).file_name().and_then(|s| s.to_str()).map(String::from);
-                                                if texture_name.is_some() {
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                println!("[DB] Mesh: '{}' -> Found texture: {:?}", unique_mesh_name, texture_name);
-
-                                let vertices: Vec<types::Vertex> = mesh
-                                    .vertices
-                                    .into_iter()
-                                    .zip(mesh.normals.into_iter())
-                                    .zip(
-                                        mesh.texture_coords[0]
-                                            .clone()
-                                            .unwrap_or_default()
-                                            .into_iter(),
-                                    )
-                                    .map(|((v, n), uv)| types::Vertex {
-                                        position: glam::vec4(v.x, v.y, v.z, 1.0),
-                                        normal: glam::vec4(n.x, n.y, n.z, 0.0),
-                                        uv: glam::vec2(uv.x, 1.0 - uv.y),
-                                        _padding: [0.0; 2],
-                                    })
-                                    .collect();
-                                let indices: Vec<u32> =
-                                    mesh.faces.into_iter().flat_map(|f| f.0).collect();
-
-                                const MAX_VERTICES: usize = 64;
-                                const MAX_TRIANGLES: usize = 128;
-
-                                let vertex_stride = std::mem::size_of::<types::Vertex>();
-                                let vertex_data_bytes = bytemuck::cast_slice(&vertices);
-
-                                let adapter =
-                                    VertexDataAdapter::new(vertex_data_bytes, vertex_stride, 0)
-                                        .unwrap();
-                                let meshlets_result =
-                                    build_meshlets(&indices, &adapter, MAX_VERTICES, MAX_TRIANGLES, 0.0);
-
-                                let meshlets = if !meshlets_result.meshlets.is_empty() {
-                                    println!(
-                                        "[DB] Mesh: '{}' -> Generated {} meshlets",
-                                        unique_mesh_name,
-                                        meshlets_result.meshlets.len()
-                                    );
-
-                                    let converted_meshlets = meshlets_result
-                                        .meshlets
-                                        .iter()
-                                        .map(|m| Meshlet {
-                                            vertex_offset: m.vertex_offset,
-                                            triangle_offset: m.triangle_offset,
-                                            vertex_count: m.vertex_count,
-                                            triangle_count: m.triangle_count,
-                                        })
-                                        .collect();
-
-                                    Some(Meshlets {
-                                        meshlets: converted_meshlets,
-                                        vertices: meshlets_result.vertices,
-                                        triangles: meshlets_result.triangles,
-                                    })
-                                } else {
-                                    None
-                                };
-
-                                Mesh {
-                                    name: unique_mesh_name,
-                                    vertices,
-                                    indices,
-                                    texture_name,
-                                    meshlets,
-                                }
-                            })
-                            .collect();
+                        let encoded_model: Vec<u8> = bincode::serialize(&new_model)?;
+                        model_table.insert(model_name, encoded_model.as_slice())?;
 
                         for (name, data) in new_textures_to_add {
                             texture_table.insert(name.as_str(), data.as_slice())?;
                         }
-
-                        let model = Model {
-                            name: model_name.to_string(),
-                            meshes,
-                        };
-
-                        let encoded = bincode::serialize(&model)?;
-                        model_table.insert(model_name, encoded.as_slice())?;
                     }
                     Some("png") => {
                         println!("Processing texture: {}", file_name);

@@ -19,6 +19,8 @@ struct MeshletDescription {
 struct DrawCommand {
     meshlet_id: u32,
     transform_id: u32,
+    texture_id: u32,
+    _padding: u32,
 };
 
 // Data passed from vertex to fragment stage.
@@ -26,6 +28,7 @@ struct VSOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) world_normal: vec3<f32>,
     @location(1) uv: vec2<f32>,
+    @location(2) @interpolate(flat) texture_id: u32,
 };
 
 
@@ -42,6 +45,8 @@ struct VSOutput {
 @group(1) @binding(3) var<storage, read> meshlet_descriptions: array<MeshletDescription>;
 @group(1) @binding(4) var<storage, read> indirection_buffer: array<DrawCommand>;
 @group(1) @binding(5) var<storage, read> transform_buffer: array<mat4x4<f32>>;
+@group(1) @binding(6) var texture_array: texture_2d_array<f32>;
+@group(1) @binding(7) var texture_sampler: sampler;
 
 
 //-- Vertex Shader -------------------------------------------------------------
@@ -58,6 +63,7 @@ fn vs_main(
     output.clip_position = vec4<f32>(2.0, 2.0, 2.0, 1.0); // Outside clip space
     output.world_normal = vec3<f32>(0.0, 0.0, 0.0);
     output.uv = vec2<f32>(0.0, 0.0);
+    output.texture_id = 0u;
 
     // 1. Fetch the draw command for this instance.
     let command = indirection_buffer[instance_id];
@@ -98,6 +104,7 @@ fn vs_main(
     output.clip_position = camera * world_pos;
     output.world_normal = normalize((model_transform * vec4<f32>(vertex.normal, 0.0)).xyz);
     output.uv = vertex.uv;
+    output.texture_id = command.texture_id;
 
     return output;
 }
@@ -107,13 +114,9 @@ fn vs_main(
 
 @fragment
 fn fs_main(in: VSOutput) -> @location(0) vec4<f32> {
-    // Simple lighting model
-    let light_dir = normalize(vec3<f32>(0.5, 1.0, 0.6));
-    // Use the world normal passed from the vertex shader for lighting calculations.
-    let diffuse_light = max(dot(in.world_normal, light_dir), 0.1);
-    // For now, output a solid color combined with the diffuse light.
-    // A real implementation would sample a texture using `in.uv`.
-    let base_color = vec3<f32>(0.8, 0.7, 0.6);
-    let final_color = base_color * diffuse_light;
+
+    // Sample the texture
+    let base_color = textureSample(texture_array, texture_sampler, in.uv, in.texture_id);
+    let final_color = base_color.rgb ;
     return vec4<f32>(final_color, 1.0);
 } 

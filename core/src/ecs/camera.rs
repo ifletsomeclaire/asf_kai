@@ -1,7 +1,11 @@
-use crate::ecs::{input::Input, ui::EguiCtx};
+use crate::{
+    config::Config,
+    ecs::{input::Input, ui::EguiCtx},
+};
 use bevy_ecs::prelude::*;
 use bevy_transform::components::Transform;
 use glam::{Mat4, Quat, Vec3};
+use eframe::egui::Key;
 
 #[derive(Component)]
 pub struct Camera {
@@ -66,33 +70,52 @@ pub fn camera_control_system(
     mut orbit_camera: ResMut<OrbitCamera>,
     input: Res<Input>,
     egui_ctx: Res<EguiCtx>,
+    config: Res<Config>,
 ) {
     if egui_ctx.wants_pointer_input() || egui_ctx.wants_keyboard_input() {
         return;
     }
 
+    let camera_config = &config.camera;
+    let rotation =
+        Quat::from_rotation_y(orbit_camera.yaw) * Quat::from_rotation_x(orbit_camera.pitch);
+
+    // Keyboard pan
+    let mut pan_delta = Vec3::ZERO;
+    if input.0.key_down(Key::W) {
+        pan_delta += rotation * Vec3::Z;
+    }
+    if input.0.key_down(Key::S) {
+        pan_delta -= rotation * Vec3::Z;
+    }
+    if input.0.key_down(Key::A) {
+        pan_delta += rotation * Vec3::X;
+    }
+    if input.0.key_down(Key::D) {
+        pan_delta -= rotation * Vec3::X;
+    }
+    orbit_camera.pan += pan_delta.normalize_or_zero() * camera_config.keyboard_pan_sensitivity;
+
     if input.0.raw_scroll_delta.y != 0.0 {
-        orbit_camera.distance -= input.0.raw_scroll_delta.y * orbit_camera.distance * 0.1;
+        orbit_camera.distance -=
+            input.0.raw_scroll_delta.y * orbit_camera.distance * camera_config.zoom_sensitivity;
         orbit_camera.distance = orbit_camera.distance.clamp(1.0, 10000.0);
     }
 
     if input.0.pointer.primary_down() {
         let delta = input.0.pointer.delta();
-        orbit_camera.yaw -= delta.x * 0.005;
-        orbit_camera.pitch -= delta.y * 0.005;
+        orbit_camera.yaw -= delta.x * camera_config.orbit_sensitivity;
+        orbit_camera.pitch -= delta.y * camera_config.orbit_sensitivity;
 
-        orbit_camera.pitch = orbit_camera.pitch.clamp(
-            -std::f32::consts::FRAC_PI_2 + 0.01,
-            std::f32::consts::FRAC_PI_2 - 0.01,
-        );
+        orbit_camera.pitch = orbit_camera
+            .pitch
+            .clamp(-std::f32::consts::FRAC_PI_2 + 0.01, std::f32::consts::FRAC_PI_2 - 0.01);
     }
 
     if input.0.pointer.secondary_down() {
         let delta = input.0.pointer.delta();
-        let rotation =
-            Quat::from_rotation_y(orbit_camera.yaw) * Quat::from_rotation_x(orbit_camera.pitch);
         let right = rotation * -Vec3::X;
         let up = rotation * Vec3::Y;
-        orbit_camera.pan += (right * delta.x - up * delta.y) * 0.01;
+        orbit_camera.pan += (right * delta.x - up * delta.y) * camera_config.pan_sensitivity;
     }
 }

@@ -79,7 +79,8 @@ impl D3Pipeline {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
+                // cull_mode: Some(wgpu::Face::Back),
+                cull_mode: None,
                 polygon_mode: wgpu::PolygonMode::Fill,
                 unclipped_depth: false,
                 conservative: false,
@@ -196,6 +197,8 @@ pub fn render_d3_pipeline_system(
         render_pass.set_pipeline(&pipeline.pipeline);
         render_pass.set_bind_group(0, &camera_bind_group, &[]);
         render_pass.set_bind_group(1, asset_server.mesh_bind_group.as_ref().unwrap(), &[]);
+        
+        println!("[D3 Pipeline] Drawing {} instances.", asset_server.draw_commands.len());
         // Draw all the meshlets.
         render_pass.draw(
             0..(128 * 3), // Max triangles * 3

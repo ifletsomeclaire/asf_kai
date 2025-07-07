@@ -3,9 +3,39 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Resource, Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CameraConfig {
+    pub orbit_sensitivity: f32,
+    pub pan_sensitivity: f32,
+    pub zoom_sensitivity: f32,
+    pub keyboard_pan_sensitivity: f32,
+}
+
+impl Default for CameraConfig {
+    fn default() -> Self {
+        Self {
+            orbit_sensitivity: 0.005,
+            pan_sensitivity: 0.01,
+            zoom_sensitivity: 0.1,
+            keyboard_pan_sensitivity: 0.1,
+        }
+    }
+}
+
+#[derive(Resource, Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
     pub vsync: bool,
+    #[serde(default)]
+    pub camera: CameraConfig,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            vsync: true,
+            camera: CameraConfig::default(),
+        }
+    }
 }
 
 impl Config {
