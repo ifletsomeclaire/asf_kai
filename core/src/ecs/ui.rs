@@ -71,7 +71,7 @@ pub fn ui_system(mut p: UiSystemParams) {
     });
 
     egui::Window::new("Camera").show(ctx, |ui| {
-        if let Ok(camera) = p.camera_query.get_single() {
+        if let Ok(camera) = p.camera_query.single() {
             ui.label(format!("Distance: {:.2}", p.orbit_camera.distance));
             ui.label(format!("Yaw: {:.2}", p.orbit_camera.yaw.to_degrees()));
             ui.label(format!("Pitch: {:.2}", p.orbit_camera.pitch.to_degrees()));

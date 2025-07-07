@@ -106,7 +106,7 @@ pub fn new(world: &mut World) -> AssetServer {
     for result in texture_table.iter().unwrap() {
         let (name_bytes, texture_data) = result.unwrap();
         let name = name_bytes.value();
-        println!("[Asset Loading] Loading texture: {}", name);
+        println!("[Asset Loading] Loading texture: {name}");
         if let Ok(image) = image::load_from_memory(texture_data.value()) {
             texture_map.insert(name.to_string(), texture_cpu_data.len() as u32);
             texture_cpu_data.push(image);
@@ -235,7 +235,7 @@ pub fn new(world: &mut World) -> AssetServer {
     };
     let device = world.resource::<WgpuDevice>();
     let queue = world.resource::<crate::renderer::core::WgpuQueue>();
-    create_gpu_resources(&mut asset_server, &device, &queue);
+    create_gpu_resources(&mut asset_server, device, queue);
     asset_server
 }
 

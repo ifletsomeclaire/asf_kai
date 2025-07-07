@@ -66,6 +66,12 @@ impl<T> Clone for Handle<T> {
 // In a real app, this would be a Resource with caching logic.
 pub struct AssetServer;
 
+impl Default for AssetServer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AssetServer {
     pub fn new() -> Self {
         Self

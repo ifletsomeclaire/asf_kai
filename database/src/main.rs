@@ -41,7 +41,7 @@ fn process_node(
         let mesh = &scene.meshes[mesh_index as usize];
         let material = &scene.materials[mesh.material_index as usize];
         let mut texture_name = None;
-        let unique_mesh_name = format!("{}-mesh-{}", model_name, mesh_index);
+        let unique_mesh_name = format!("{model_name}-mesh-{mesh_index}");
 
         let texture_to_use = material
             .textures
@@ -49,7 +49,7 @@ fn process_node(
             .or_else(|| material.textures.get(&TextureType::Emissive));
 
         if let Some(texture_ref) = texture_to_use {
-            let texture: Ref<Texture> = (&**texture_ref).borrow();
+            let texture: Ref<Texture> = (**texture_ref).borrow();
             match &texture.data {
                 russimp::material::DataContent::Bytes(bytes) => {
                     let texture_type_str = if material.textures.contains_key(&TextureType::Diffuse) {
@@ -57,13 +57,13 @@ fn process_node(
                     } else {
                         "emissive"
                     };
-                    let new_name = format!("{}_{}.png", unique_mesh_name, texture_type_str);
+                    let new_name = format!("{unique_mesh_name}_{texture_type_str}.png");
 
                     new_textures_to_add.push((new_name.clone(), bytes.clone()));
                     texture_name = Some(new_name);
                 }
                 russimp::material::DataContent::Texel(_) => {
-                    eprintln!("Found uncompressed texel data for model '{}'. This is not currently supported for embedded textures.", model_name);
+                    eprintln!("Found uncompressed texel data for model '{model_name}'. This is not currently supported for embedded textures.");
                 }
             }
         } else {
@@ -83,8 +83,7 @@ fn process_node(
         }
 
         println!(
-            "[DB] Mesh: '{}' -> Found texture: {:?}",
-            unique_mesh_name, texture_name
+            "[DB] Mesh: '{unique_mesh_name}' -> Found texture: {texture_name:?}"
         );
 
         let vertices: Vec<types::Vertex> = mesh
@@ -240,7 +239,7 @@ impl ModelDatabase {
                             .and_then(|s| s.to_str())
                             .unwrap_or("unknown_model");
 
-                        println!("Processing model: {}", model_name);
+                        println!("Processing model: {model_name}");
 
                         let scene = Scene::from_file(
                             path.to_str().unwrap(),
@@ -254,7 +253,7 @@ impl ModelDatabase {
                         let mut new_textures_to_add: Vec<(String, Vec<u8>)> = Vec::new();
                         let model_meshes = if let Some(root) = &scene.root {
                             process_node(
-                                &root.borrow(),
+                                root.borrow(),
                                 &scene,
                                 &glam::Mat4::IDENTITY,
                                 model_name,
@@ -287,7 +286,7 @@ impl ModelDatabase {
                         }
                     }
                     Some("png") => {
-                        println!("Processing texture: {}", file_name);
+                        println!("Processing texture: {file_name}");
                         let texture_bytes = fs::read(path)?;
                         texture_table.insert(file_name, texture_bytes.as_slice())?;
                     }
@@ -329,7 +328,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let db = ModelDatabase::new(&db_path)?;
     db.populate_from_assets(&assets_path)?;
-    println!("Database populated successfully from {:?}", assets_path);
+    println!("Database populated successfully from {assets_path:?}");
 
     // Example of retrieving a model
     if let Some(model) = db.get_model("cube")? {
