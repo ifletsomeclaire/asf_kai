@@ -559,7 +559,7 @@ dependencies = [
  "bitflags 2.9.1",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.12.1",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -1007,7 +1007,9 @@ name = "database"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "bytemuck",
  "glam",
+ "meshopt",
  "redb",
  "russimp",
  "serde",
@@ -1118,7 +1120,7 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 [[package]]
 name = "ecolor"
 version = "0.31.1"
-source = "git+https://github.com/emilk/egui#ab9f55ab0144462c1bc46a1fc49fe3b18f4d0fa7"
+source = "git+https://github.com/emilk/egui#7ac137bfc167d0f7ff78d5fd042d6042ff190455"
 dependencies = [
  "bytemuck",
  "emath",
@@ -1127,7 +1129,7 @@ dependencies = [
 [[package]]
 name = "eframe"
 version = "0.31.1"
-source = "git+https://github.com/emilk/egui#ab9f55ab0144462c1bc46a1fc49fe3b18f4d0fa7"
+source = "git+https://github.com/emilk/egui#7ac137bfc167d0f7ff78d5fd042d6042ff190455"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -1160,7 +1162,7 @@ dependencies = [
 [[package]]
 name = "egui"
 version = "0.31.1"
-source = "git+https://github.com/emilk/egui#ab9f55ab0144462c1bc46a1fc49fe3b18f4d0fa7"
+source = "git+https://github.com/emilk/egui#7ac137bfc167d0f7ff78d5fd042d6042ff190455"
 dependencies = [
  "ahash",
  "bitflags 2.9.1",
@@ -1176,7 +1178,7 @@ dependencies = [
 [[package]]
 name = "egui-wgpu"
 version = "0.31.1"
-source = "git+https://github.com/emilk/egui#ab9f55ab0144462c1bc46a1fc49fe3b18f4d0fa7"
+source = "git+https://github.com/emilk/egui#7ac137bfc167d0f7ff78d5fd042d6042ff190455"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -1195,7 +1197,7 @@ dependencies = [
 [[package]]
 name = "egui-winit"
 version = "0.31.1"
-source = "git+https://github.com/emilk/egui#ab9f55ab0144462c1bc46a1fc49fe3b18f4d0fa7"
+source = "git+https://github.com/emilk/egui#7ac137bfc167d0f7ff78d5fd042d6042ff190455"
 dependencies = [
  "ahash",
  "arboard",
@@ -1219,7 +1221,7 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 [[package]]
 name = "emath"
 version = "0.31.1"
-source = "git+https://github.com/emilk/egui#ab9f55ab0144462c1bc46a1fc49fe3b18f4d0fa7"
+source = "git+https://github.com/emilk/egui#7ac137bfc167d0f7ff78d5fd042d6042ff190455"
 dependencies = [
  "bytemuck",
 ]
@@ -1236,7 +1238,7 @@ dependencies = [
 [[package]]
 name = "epaint"
 version = "0.31.1"
-source = "git+https://github.com/emilk/egui#ab9f55ab0144462c1bc46a1fc49fe3b18f4d0fa7"
+source = "git+https://github.com/emilk/egui#7ac137bfc167d0f7ff78d5fd042d6042ff190455"
 dependencies = [
  "ab_glyph",
  "ahash",
@@ -1253,7 +1255,7 @@ dependencies = [
 [[package]]
 name = "epaint_default_fonts"
 version = "0.31.1"
-source = "git+https://github.com/emilk/egui#ab9f55ab0144462c1bc46a1fc49fe3b18f4d0fa7"
+source = "git+https://github.com/emilk/egui#7ac137bfc167d0f7ff78d5fd042d6042ff190455"
 
 [[package]]
 name = "equator"
@@ -1384,6 +1386,15 @@ checksum = "4a3d7db9596fecd151c5f638c0ee5d5bd487b6e0ea232e5dc96d5250f6f94b1d"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
+]
+
+[[package]]
+name = "float-cmp"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b09cf3155332e944990140d967ff5eceb70df778b34f77d8075db46e4704e6d8"
+dependencies = [
+ "num-traits",
 ]
 
 [[package]]
@@ -2024,15 +2035,6 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
@@ -2262,6 +2264,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd3f7eed9d3848f8b98834af67102b720745c4ec028fcd0aa0239277e7de374f"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "meshopt"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e334947c3ddb9d2f39a60aa8f5cb6413a66f3b69c78e3ca274942e6816f629f6"
+dependencies = [
+ "bitflags 2.9.1",
+ "cc",
+ "float-cmp",
+ "thiserror 2.0.12",
 ]
 
 [[package]]
@@ -4283,6 +4297,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "glam",
+ "redb",
  "serde",
 ]
 
@@ -4300,9 +4315,9 @@ checksum = "f6ccf251212114b54433ec949fd6a7841275f9ada20dddd2f29e9ceea4501493"
 
 [[package]]
 name = "unicode-width"
-version = "0.2.1"
+version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a1a07cc7db3810833284e8d372ccdc6da29741639ecc70c9ec107df0fa6154c"
+checksum = "7dd6e30e90baa6f72411720665d41d89b9a3d039dc45b8faea1ddd07f617f6af"
 
 [[package]]
 name = "unicode-xid"

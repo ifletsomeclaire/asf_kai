@@ -10,27 +10,29 @@ use std::sync::Arc;
 use crate::{
     config::Config,
     ecs::{
-        asset_systems::{patch_instance_data_system, process_asset_loads_system},
+        // asset_systems::{patch_instance_data_system, process_asset_loads_system},
         camera::{Camera, OrbitCamera, camera_control_system, update_camera_transform_system},
         framerate::{FrameRate, frame_rate_system},
         input::{Input, keyboard_input_system},
-        model::{
-            SpawnedEntities, initialize_asset_db_system, initialize_fallback_assets_system,
-            spawn_asset_loader_task_system,
-        },
+        // model::{
+        //     SpawnedEntities, initialize_asset_db_system, initialize_fallback_assets_system,
+        //     spawn_asset_loader_task_system,
+        // },
         ui::{EguiCtx, LastSize, UiState, ui_system},
     },
     renderer::{
-        core::{WgpuDevice, WgpuQueue, WgpuRenderState, initialize_renderer},
-        d3_pipeline::{
-            render_d3_pipeline_system, setup_d3_pipeline_system, setup_depth_texture_system,
-            update_camera_buffer_system,
-        },
+        assets::AssetServer,
+        core::{WgpuDevice, WgpuQueue, WgpuRenderState},
+        d3_pipeline::{render_d3_pipeline_system},
+        // d3_pipeline::{
+        //     render_d3_pipeline_system, setup_d3_pipeline_system, setup_depth_texture_system,
+        //     update_camera_buffer_system,
+        // },
         events::ResizeEvent,
-        scene::prepare_and_copy_scene_data_system,
+        // scene::prepare_and_copy_scene_data_system,
         tonemapping_pass::{
-            TonemappingBindGroup, TonemappingPass, resize_hdr_texture_system,
-            setup_tonemapping_pass_system,
+           TonemappingBindGroup, TonemappingPass,
+            resize_hdr_texture_system, setup_tonemapping_pass_system,
         },
         triangle_pass::{
             clear_hdr_texture_system, render_triangle_system, setup_triangle_pass_system,
@@ -64,7 +66,7 @@ impl Custom3d {
         world.insert_resource(WgpuDevice(device.clone()));
         world.insert_resource(WgpuQueue(queue.clone()));
         world.insert_resource(WgpuRenderState(wgpu_render_state.clone()));
-        initialize_renderer(&mut world, &device);
+ 
 
         world.insert_resource(config);
         world.init_resource::<Events<ResizeEvent>>();
@@ -74,24 +76,25 @@ impl Custom3d {
             depth_or_array_layers: 1,
         }));
         world.init_resource::<OrbitCamera>();
-        world.insert_resource(EguiCtx(cc.egui_ctx.clone()));
+        world.init_resource::<AssetServer>();
+        // world.insert_resource(EguiCtx(cc.egui_ctx.clone()));
 
         // --- Startup Schedule ---
         let mut startup_schedule = Schedule::new(Startup);
         startup_schedule.add_systems(
             (
-                setup_d3_pipeline_system,
+                // setup_d3_pipeline_system,
                 setup_tonemapping_pass_system,
-                initialize_asset_db_system,
-                initialize_fallback_assets_system,
-                spawn_asset_loader_task_system,
+                // initialize_asset_db_system,
+                // initialize_fallback_assets_system,
+                // spawn_asset_loader_task_system,
                 (
                     setup_triangle_pass_system,
                     update_camera_transform_system,
-                    setup_depth_texture_system,
-                    resize_hdr_texture_system.after(setup_depth_texture_system),
+                   
+                    resize_hdr_texture_system,
                 )
-                    .after(setup_d3_pipeline_system)
+                    // .after(setup_d3_pipeline_system)
                     .after(setup_tonemapping_pass_system),
             )
                 .chain(),
@@ -118,9 +121,9 @@ impl Custom3d {
             .insert(tonemapping_bind_group);
 
         world.init_resource::<FrameRate>();
-        world.init_resource::<UiState>();
-        world.init_resource::<LastSize>();
-        world.init_resource::<SpawnedEntities>();
+        // world.init_resource::<UiState>();
+        // world.init_resource::<LastSize>();
+        // world.init_resource::<SpawnedEntities>();
 
         world.spawn((
             Camera::default(),
@@ -137,11 +140,11 @@ impl Custom3d {
                 update_camera_transform_system.after(camera_control_system),
                 frame_rate_system,
                 ui_system,
-                update_camera_buffer_system.after(ui_system),
+                // update_camera_buffer_system.after(ui_system),
                 // Note: process_spawn_requests_system is removed. Spawning is handled by commands.
-                process_asset_loads_system,
-                patch_instance_data_system.after(process_asset_loads_system),
-                prepare_and_copy_scene_data_system.after(patch_instance_data_system),
+                //process_asset_loads_system,
+                //patch_instance_data_system.after(process_asset_loads_system),
+                //prepare_and_copy_scene_data_system.after(patch_instance_data_system),
             )
                 .chain(),
         );
@@ -157,7 +160,7 @@ impl Custom3d {
             (
                 clear_hdr_texture_system,
                 render_triangle_system.run_if(|ui_state: Res<UiState>| ui_state.render_triangle),
-                render_d3_pipeline_system.run_if(|ui_state: Res<UiState>| ui_state.render_model),
+                render_d3_pipeline_system,
             )
                 .chain(),
         );

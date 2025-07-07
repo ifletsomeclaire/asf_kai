@@ -2,13 +2,13 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use meshopt::{build_meshlets, VertexDataAdapter};
 use redb::{Database, TableDefinition};
 use russimp::material::TextureType;
 use russimp::scene::{PostProcess, Scene};
-use types::{Mesh, Model};
-
-const MODEL_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("models");
-const TEXTURE_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("textures");
+use types::MODEL_TABLE;
+use types::TEXTURE_TABLE;
+use types::{Mesh, Meshlet, Meshlets, Model};
 
 pub struct ModelDatabase {
     db: Database,
@@ -143,11 +143,52 @@ impl ModelDatabase {
                                     .collect();
                                 let indices: Vec<u32> =
                                     mesh.faces.into_iter().flat_map(|f| f.0).collect();
+
+                                const MAX_VERTICES: usize = 64;
+                                const MAX_TRIANGLES: usize = 128;
+
+                                let vertex_stride = std::mem::size_of::<types::Vertex>();
+                                let vertex_data_bytes = bytemuck::cast_slice(&vertices);
+
+                                let adapter =
+                                    VertexDataAdapter::new(vertex_data_bytes, vertex_stride, 0)
+                                        .unwrap();
+                                let meshlets_result =
+                                    build_meshlets(&indices, &adapter, MAX_VERTICES, MAX_TRIANGLES, 0.0);
+
+                                let meshlets = if !meshlets_result.meshlets.is_empty() {
+                                    println!(
+                                        "[DB] Mesh: '{}' -> Generated {} meshlets",
+                                        unique_mesh_name,
+                                        meshlets_result.meshlets.len()
+                                    );
+
+                                    let converted_meshlets = meshlets_result
+                                        .meshlets
+                                        .iter()
+                                        .map(|m| Meshlet {
+                                            vertex_offset: m.vertex_offset,
+                                            triangle_offset: m.triangle_offset,
+                                            vertex_count: m.vertex_count,
+                                            triangle_count: m.triangle_count,
+                                        })
+                                        .collect();
+
+                                    Some(Meshlets {
+                                        meshlets: converted_meshlets,
+                                        vertices: meshlets_result.vertices,
+                                        triangles: meshlets_result.triangles,
+                                    })
+                                } else {
+                                    None
+                                };
+
                                 Mesh {
                                     name: unique_mesh_name,
                                     vertices,
                                     indices,
                                     texture_name,
+                                    meshlets,
                                 }
                             })
                             .collect();
@@ -219,6 +260,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("    - Mesh: {}", mesh.name);
             println!("      - Vertices: {}", mesh.vertices.len());
             println!("      - Indices: {}", mesh.indices.len());
+            if let Some(meshlets) = &mesh.meshlets {
+                println!("      - Meshlets: {}", meshlets.meshlets.len());
+            }
             // Print first 3 vertices for inspection
             for (j, v) in mesh.vertices.iter().take(3).enumerate() {
                 println!(

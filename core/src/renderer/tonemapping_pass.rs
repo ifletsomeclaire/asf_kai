@@ -1,6 +1,6 @@
 use crate::renderer::{
     core::{HDR_FORMAT, WgpuDevice, WgpuQueue, WgpuRenderState},
-    d3_pipeline::{DEPTH_FORMAT, DepthTexture},
+    d3_pipeline::DEPTH_FORMAT,
     events::ResizeEvent,
 };
 use bevy_derive::{Deref, DerefMut};
@@ -18,6 +18,12 @@ pub struct TonemappingPass {
 pub struct HdrTexture {
     pub view: wgpu::TextureView,
     pub size: wgpu::Extent3d,
+}
+
+#[derive(Resource)]
+pub struct DepthTexture {
+    pub texture: wgpu::Texture,
+    pub view: wgpu::TextureView,
 }
 
 #[derive(Resource, Deref, DerefMut)]
@@ -165,6 +171,23 @@ pub fn setup_tonemapping_pass_system(
         mag_filter: wgpu::FilterMode::Linear,
         min_filter: wgpu::FilterMode::Linear,
         ..Default::default()
+    });
+
+    let depth_texture_desc = wgpu::TextureDescriptor {
+        label: Some("depth_texture"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: DEPTH_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[DEPTH_FORMAT],
+    };
+    let depth_texture = device.create_texture(&depth_texture_desc);
+    let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    commands.insert_resource(DepthTexture {
+        texture: depth_texture,
+        view: depth_view,
     });
 
     let tonemap_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {

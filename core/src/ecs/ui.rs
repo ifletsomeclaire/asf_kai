@@ -7,9 +7,9 @@ use eframe::egui;
 use crate::{
     config::Config,
     ecs::{
-        commands::{DespawnInstance, SpawnInstance},
+        // commands::{DespawnInstance, SpawnInstance},
         framerate::FrameRate,
-        model::SpawnedEntities,
+        // model::SpawnedEntities,
     },
     renderer::{assets::AssetServer, events::ResizeEvent},
 };
@@ -51,7 +51,7 @@ pub struct UiSystemParams<'w, 's> {
     // --- For Spawner ---
     commands: Commands<'w, 's>,
     asset_server: Res<'w, AssetServer>,
-    spawned_entities: ResMut<'w, SpawnedEntities>,
+    // spawned_entities: ResMut<'w, SpawnedEntities>,
 }
 
 pub fn ui_system(mut p: UiSystemParams) {
@@ -70,54 +70,54 @@ pub fn ui_system(mut p: UiSystemParams) {
 
     egui::Window::new("Spawner").show(ctx, |ui| {
         // --- Mesh Selection ---
-        let mesh_names = p.asset_server.get_mesh_names();
-        if p.ui_state.spawner_selected_mesh.is_empty() {
-            p.ui_state.spawner_selected_mesh = mesh_names.first().cloned().unwrap_or_default();
-        }
-        egui::ComboBox::from_label("Mesh")
-            .selected_text(p.ui_state.spawner_selected_mesh.clone())
-            .show_ui(ui, |ui| {
-                for name in mesh_names {
-                    ui.selectable_value(&mut p.ui_state.spawner_selected_mesh, name.clone(), name);
-                }
-            });
+        // let mesh_names = p.asset_server.get_mesh_names();
+        // if p.ui_state.spawner_selected_mesh.is_empty() {
+        //     p.ui_state.spawner_selected_mesh = mesh_names.first().cloned().unwrap_or_default();
+        // }
+        // egui::ComboBox::from_label("Mesh")
+        //     .selected_text(p.ui_state.spawner_selected_mesh.clone())
+        //     .show_ui(ui, |ui| {
+        //         for name in mesh_names {
+        //             ui.selectable_value(&mut p.ui_state.spawner_selected_mesh, name.clone(), name);
+        //         }
+        //     });
 
         // --- Texture Selection ---
-        let texture_names = p.asset_server.get_texture_names();
-        if p.ui_state.spawner_selected_texture.is_empty() {
-            p.ui_state.spawner_selected_texture =
-                texture_names.first().cloned().unwrap_or_default();
-        }
-        egui::ComboBox::from_label("Texture")
-            .selected_text(p.ui_state.spawner_selected_texture.clone())
-            .show_ui(ui, |ui| {
-                for name in texture_names {
-                    ui.selectable_value(
-                        &mut p.ui_state.spawner_selected_texture,
-                        name.clone(),
-                        name,
-                    );
-                }
-            });
+        // let texture_names = p.asset_server.get_texture_names();
+        // if p.ui_state.spawner_selected_texture.is_empty() {
+        //     p.ui_state.spawner_selected_texture =
+        //         texture_names.first().cloned().unwrap_or_default();
+        // }
+        // egui::ComboBox::from_label("Texture")
+        //     .selected_text(p.ui_state.spawner_selected_texture.clone())
+        //     .show_ui(ui, |ui| {
+        //         for name in texture_names {
+        //             ui.selectable_value(
+        //                 &mut p.ui_state.spawner_selected_texture,
+        //                 name.clone(),
+        //                 name,
+        //             );
+        //         }
+        //     });
 
-        ui.separator();
+        // ui.separator();
 
-        if ui.button("Spawn").clicked()
-            && !p.ui_state.spawner_selected_mesh.is_empty()
-            && !p.ui_state.spawner_selected_texture.is_empty()
-        {
-            p.commands.queue(SpawnInstance {
-                transform: GlobalTransform::default(),
-                mesh_name: p.ui_state.spawner_selected_mesh.clone(),
-                texture_name: p.ui_state.spawner_selected_texture.clone(),
-            });
-        }
+        // if ui.button("Spawn").clicked()
+        //     && !p.ui_state.spawner_selected_mesh.is_empty()
+        //     && !p.ui_state.spawner_selected_texture.is_empty()
+        // {
+        //     p.commands.queue(SpawnInstance {
+        //         transform: GlobalTransform::default(),
+        //         mesh_name: p.ui_state.spawner_selected_mesh.clone(),
+        //         texture_name: p.ui_state.spawner_selected_texture.clone(),
+        //     });
+        // }
 
-        if ui.button("Despawn Last").clicked() {
-            if let Some(entity) = p.spawned_entities.0.pop() {
-                p.commands.queue(DespawnInstance { entity });
-            }
-        }
+        // if ui.button("Despawn Last").clicked() {
+        //     if let Some(entity) = p.spawned_entities.0.pop() {
+        //         p.commands.queue(DespawnInstance { entity });
+        //     }
+        // }
     });
 
     egui::CentralPanel::default().show(ctx, |ui| {
