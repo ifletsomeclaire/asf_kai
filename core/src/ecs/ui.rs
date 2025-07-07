@@ -190,7 +190,7 @@ pub fn ui_system(mut p: UiSystemParams) {
 
         let callback = eframe::egui_wgpu::Callback::new_paint_callback(
             rect,
-            crate::renderer::tonemapping_pass::FinalBlitCallback {},
+            crate::renderer::pipelines::tonemapping::FinalBlitCallback {},
         );
         ui.painter().add(callback);
     });

@@ -2,7 +2,9 @@ use bevy_ecs::prelude::*;
 use std::num::NonZeroU64;
 use wgpu::util::DeviceExt;
 
-use super::core::{HDR_FORMAT, WgpuDevice, WgpuQueue};
+use crate::renderer::core::{HDR_FORMAT, WgpuDevice, WgpuQueue, WgpuRenderState};
+
+use super::tonemapping::HdrTexture;
 
 #[derive(Resource)]
 pub struct TriangleRenderResources {
@@ -14,7 +16,7 @@ pub struct TriangleRenderResources {
 pub fn clear_hdr_texture_system(
     device: Res<WgpuDevice>,
     queue: Res<WgpuQueue>,
-    hdr_texture: Res<super::tonemapping_pass::HdrTexture>,
+    hdr_texture: Res<HdrTexture>,
 ) {
     let device = &device.0;
     let queue = &queue.0;
@@ -45,7 +47,7 @@ pub fn setup_triangle_pass_system(mut commands: Commands, device_res: Res<WgpuDe
     let device = &device_res.0;
     let triangle_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("custom3d"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/shader.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/shader.wgsl").into()),
     });
 
     let triangle_bind_group_layout =
@@ -117,7 +119,7 @@ pub fn render_triangle_system(
     device: Res<WgpuDevice>,
     queue: Res<WgpuQueue>,
     triangle_resources: Res<TriangleRenderResources>,
-    hdr_texture: Res<super::tonemapping_pass::HdrTexture>,
+    hdr_texture: Res<HdrTexture>,
 ) {
     let device = &device.0;
     let queue = &queue.0;

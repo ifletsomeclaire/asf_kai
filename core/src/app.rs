@@ -23,19 +23,16 @@ use crate::{
     renderer::{
         assets::AssetServer,
         core::{WgpuDevice, WgpuQueue, WgpuRenderState},
-        d3_pipeline::{render_d3_pipeline_system},
-        // d3_pipeline::{
-        //     render_d3_pipeline_system, setup_d3_pipeline_system, setup_depth_texture_system,
-        //     update_camera_buffer_system,
-        // },
         events::ResizeEvent,
-        // scene::prepare_and_copy_scene_data_system,
-        tonemapping_pass::{
-           TonemappingBindGroup, TonemappingPass,
-            resize_hdr_texture_system, setup_tonemapping_pass_system,
-        },
-        triangle_pass::{
-            clear_hdr_texture_system, render_triangle_system, setup_triangle_pass_system,
+        pipelines::{
+            d3_pipeline::render_d3_pipeline_system,
+            tonemapping::{
+                resize_hdr_texture_system, setup_tonemapping_pass_system, TonemappingBindGroup,
+                TonemappingPass,
+            },
+            triangle::{
+                clear_hdr_texture_system, render_triangle_system, setup_triangle_pass_system,
+            },
         },
     },
 };

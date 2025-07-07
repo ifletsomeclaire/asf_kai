@@ -1,6 +1,6 @@
 use crate::renderer::{
     core::{HDR_FORMAT, WgpuDevice, WgpuQueue, WgpuRenderState},
-    d3_pipeline::DEPTH_FORMAT,
+    pipelines::d3_pipeline::DEPTH_FORMAT,
     events::ResizeEvent,
 };
 use bevy_derive::{Deref, DerefMut};
@@ -192,7 +192,7 @@ pub fn setup_tonemapping_pass_system(
 
     let tonemap_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("tonemapping"),
-        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/tonemapping.wgsl").into()),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../../shaders/tonemapping.wgsl").into()),
     });
 
     let tonemap_bind_group_layout =

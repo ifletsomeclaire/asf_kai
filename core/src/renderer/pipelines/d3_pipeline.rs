@@ -1,10 +1,7 @@
 use bevy_ecs::{
-    prelude::{Res, ResMut, Query},
-    system::{Commands, NonSend},
-    world::World,
+    prelude::{Res,Query},
 };
 use bevy_transform::components::GlobalTransform;
-use glam::Mat4;
 use wgpu::{include_wgsl, util::DeviceExt, PipelineCompilationOptions};
 
 use crate::{
@@ -12,7 +9,7 @@ use crate::{
     renderer::{
         assets::AssetServer,
         core::{WgpuDevice,  WgpuQueue},
-        tonemapping_pass::{DepthTexture, HdrTexture},
+        pipelines::tonemapping::{DepthTexture, HdrTexture},
     },
 };
 
@@ -29,7 +26,7 @@ impl D3Pipeline {
         asset_server: &AssetServer,
         surface_format: wgpu::TextureFormat,
     ) -> Self {
-        let shader = device.create_shader_module(include_wgsl!("../shaders/d3.wgsl"));
+        let shader = device.create_shader_module(include_wgsl!("../../shaders/d3.wgsl"));
 
         let camera_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -107,8 +104,7 @@ impl D3Pipeline {
     }
 }
 
-#[derive(bevy_ecs::prelude::Resource)]
-pub struct CameraBindGroup(pub wgpu::BindGroup);
+
 
 pub fn render_d3_pipeline_system(
     device: Res<WgpuDevice>,
@@ -117,7 +113,7 @@ pub fn render_d3_pipeline_system(
     depth_texture: Res<DepthTexture>,
     hdr_texture: Res<HdrTexture>,
     camera_query: Query<(&Camera, &GlobalTransform)>,
-    mut commands: Commands,
+ 
 ) {
     // If the mesh bind group doesn't exist on the asset server, it's because
     // no renderable meshlets were loaded. In this case, there is nothing
@@ -127,7 +123,7 @@ pub fn render_d3_pipeline_system(
     }
 
     // Try to get the camera's data. If it doesn't exist, we can't render.
-    let Ok((camera, transform)) = camera_query.get_single() else {
+    let Ok((camera, transform)) = camera_query.single() else {
         return;
     };
 
@@ -198,7 +194,6 @@ pub fn render_d3_pipeline_system(
         render_pass.set_bind_group(0, &camera_bind_group, &[]);
         render_pass.set_bind_group(1, asset_server.mesh_bind_group.as_ref().unwrap(), &[]);
         
-        println!("[D3 Pipeline] Drawing {} instances.", asset_server.draw_commands.len());
         // Draw all the meshlets.
         render_pass.draw(
             0..(128 * 3), // Max triangles * 3
