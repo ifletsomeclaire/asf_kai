@@ -1,13 +1,17 @@
 use glam::Mat4;
 use redb::{ReadOnlyTable, ReadableTable};
 use std::collections::HashMap;
-use types::{AnimatedModel, SkinnedVertex, AABB};
+use types::{AnimatedModel, SkinnedVertex, AABB, Skeleton, Animation};
 use wgpu::util::DeviceExt;
+use bevy_ecs::prelude::Resource;
 
 use crate::renderer::assets::static_meshlet::{DrawCommand, MeshletDescription};
 
+#[derive(Resource)]
 pub struct AnimatedMeshletManager {
     // CPU data
+    pub skeletons: HashMap<String, Skeleton>,
+    pub animations: HashMap<String, Animation>,
     pub vertices: Vec<SkinnedVertex>,
     pub meshlet_vertex_indices: Vec<u32>,
     pub meshlet_triangle_indices: Vec<u8>,
@@ -31,6 +35,7 @@ impl AnimatedMeshletManager {
     pub fn new(
         device: &wgpu::Device,
         model_table: &ReadOnlyTable<&str, &[u8]>,
+        animation_table: &ReadOnlyTable<&str, &[u8]>,
         texture_map: &HashMap<String, u32>,
     ) -> Self {
         let mut all_vertices = Vec::new();
@@ -38,6 +43,19 @@ impl AnimatedMeshletManager {
         let mut all_meshlet_triangle_indices = Vec::new();
         let mut all_meshlets = Vec::new();
         let mut draw_commands: Vec<DrawCommand> = Vec::new();
+
+        let mut skeletons = HashMap::new();
+        let animations: HashMap<String, Animation> = animation_table
+            .iter()
+            .unwrap()
+            .filter_map(|result| {
+                result.ok().and_then(|(name, anim_data)| {
+                    bincode::deserialize::<Animation>(anim_data.value())
+                        .ok()
+                        .map(|anim| (name.value().to_string(), anim))
+                })
+            })
+            .collect();
 
         let models: Vec<AnimatedModel> = model_table
             .iter()
@@ -53,6 +71,8 @@ impl AnimatedMeshletManager {
         let transforms = crate::renderer::assets::layout_models_in_a_row(&aabbs);
 
         for (transform_id, model) in models.iter().enumerate() {
+            skeletons.insert(model.name.clone(), model.skeleton.clone());
+
             for mesh in &model.meshes {
                 if let Some(mesh_meshlets) = &mesh.meshlets {
                     let vertex_base = all_vertices.len() as u32;
@@ -249,6 +269,8 @@ impl AnimatedMeshletManager {
             meshlets: all_meshlets,
             transforms,
             draw_commands,
+            skeletons,
+            animations,
 
             vertex_buffer,
             meshlet_vertex_index_buffer,

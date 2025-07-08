@@ -5,7 +5,7 @@ use bevy_transform::components::GlobalTransform;
 use wgpu::{include_wgsl, util::DeviceExt, PipelineCompilationOptions};
 
 use crate::{
-    ecs::camera::Camera,
+    ecs::{camera::Camera, animation::BoneMatrices},
     renderer::{
         assets::AssetServer,
         core::{WgpuDevice, WgpuQueue},
@@ -127,12 +127,17 @@ pub fn render_d3_animated_pipeline_system(
     depth_texture: Res<DepthTexture>,
     hdr_texture: Res<HdrTexture>,
     camera_query: Query<(&Camera, &GlobalTransform)>,
+    bone_matrix_query: Query<&BoneMatrices>,
 ) {
     if asset_server.animated_meshlet_manager.mesh_bind_group.is_none() {
         return;
     }
 
     let Ok((camera, transform)) = camera_query.single() else {
+        return;
+    };
+    
+    let Ok(bone_matrices) = bone_matrix_query.single() else {
         return;
     };
 
@@ -162,11 +167,9 @@ pub fn render_d3_animated_pipeline_system(
         }],
     });
     
-    // TODO: Get real bone matrices
-    let bone_matrices: Vec<glam::Mat4> = vec![glam::Mat4::IDENTITY; 128];
     let bone_matrix_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("bone_matrix_buffer"),
-        contents: bytemuck::cast_slice(&bone_matrices),
+        contents: bytemuck::cast_slice(&bone_matrices.matrices),
         usage: wgpu::BufferUsages::STORAGE,
     });
 

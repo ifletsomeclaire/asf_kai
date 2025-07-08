@@ -8,7 +8,7 @@ use crate::{
     ecs::{
         camera::{Camera, OrbitCamera},
         // commands::{DespawnInstance, SpawnInstance},
-        framerate::FrameRate,
+        time::Time,
         // model::SpawnedEntities,
     },
     renderer::{assets::AssetServer, events::ResizeEvent},
@@ -50,7 +50,7 @@ pub struct UiSystemParams<'w, 's> {
     last_size: ResMut<'w, LastSize>,
     ui_state: ResMut<'w, UiState>,
     config: ResMut<'w, Config>,
-    frame_rate: Res<'w, FrameRate>,
+    time: Res<'w, Time>,
     events: EventWriter<'w, ResizeEvent>,
     orbit_camera: Res<'w, OrbitCamera>,
     camera_query: Query<'w, 's, &'static Camera>,
@@ -64,7 +64,12 @@ pub fn ui_system(mut p: UiSystemParams) {
     let ctx = &p.egui_ctx;
 
     egui::Window::new("Settings").show(ctx, |ui| {
-        ui.label(format!("FPS: {:.1}", p.frame_rate.fps));
+        let fps = if p.time.delta_seconds() > 0.0 {
+            1.0 / p.time.delta_seconds()
+        } else {
+            0.0
+        };
+        ui.label(format!("FPS: {:.1}", fps));
         ui.separator();
         ui.checkbox(&mut p.ui_state.render_triangle, "Render Triangle");
         ui.checkbox(&mut p.ui_state.render_model, "Render Model");

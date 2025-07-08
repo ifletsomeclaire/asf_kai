@@ -8,7 +8,7 @@ use bevy_ecs::{
 };
 use glam::{Mat4, Vec3};
 use redb::ReadOnlyTable;
-use types::{AABB, MODEL_TABLE, TEXTURE_TABLE, ANIMATED_MODEL_TABLE};
+use types::{AABB, MODEL_TABLE, TEXTURE_TABLE, ANIMATED_MODEL_TABLE, ANIMATION_TABLE};
 
 use crate::{
     renderer::core::{WgpuDevice, WgpuQueue},
@@ -45,6 +45,8 @@ pub fn new(world: &mut World) -> AssetServer {
         read_txn.open_table(MODEL_TABLE).unwrap();
     let animated_model_table: ReadOnlyTable<&str, &[u8]> =
         read_txn.open_table(ANIMATED_MODEL_TABLE).unwrap();
+    let animation_table: ReadOnlyTable<&str, &[u8]> =
+        read_txn.open_table(ANIMATION_TABLE).unwrap();
     let texture_table = read_txn.open_table(TEXTURE_TABLE).unwrap();
 
     let (texture_cpu_data, texture_map) = texture::load_textures_from_db(&texture_table);
@@ -52,7 +54,7 @@ pub fn new(world: &mut World) -> AssetServer {
     let device = world.resource::<WgpuDevice>();
     let meshlet_manager = MeshletManager::new(device, &model_table, &texture_map);
     let animated_meshlet_manager =
-        AnimatedMeshletManager::new(device, &animated_model_table, &texture_map);
+        AnimatedMeshletManager::new(device, &animated_model_table, &animation_table, &texture_map);
 
     let mut asset_server = AssetServer {
         meshlet_manager,

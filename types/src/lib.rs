@@ -82,6 +82,7 @@ pub struct Bone {
     pub name: String,
     pub parent_index: Option<usize>,
     pub transform: Mat4,
+    pub inverse_bind_pose: Mat4,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -89,12 +90,30 @@ pub struct Skeleton {
     pub bones: Vec<Bone>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+pub struct PositionKey {
+    pub time: f64,
+    pub position: Vec3,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+pub struct RotationKey {
+    pub time: f64,
+    pub rotation: Quat,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+pub struct ScaleKey {
+    pub time: f64,
+    pub scale: Vec3,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Keyframe {
-    pub time: f32,
-    pub rotations: Vec<Quat>,
-    pub translations: Vec<Vec3>,
-    pub scales: Vec<Vec3>,
+pub struct AnimationChannel {
+    pub bone_name: String,
+    pub position_keys: Vec<PositionKey>,
+    pub rotation_keys: Vec<RotationKey>,
+    pub scale_keys: Vec<ScaleKey>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -102,7 +121,7 @@ pub struct Animation {
     pub name: String,
     pub duration_in_ticks: f64,
     pub ticks_per_second: f64,
-    pub keyframes: Vec<Keyframe>,
+    pub channels: Vec<AnimationChannel>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

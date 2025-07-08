@@ -14,7 +14,7 @@ use std::cell::Ref;
 use std::collections::HashMap;
 
 use types::{
-    AnimatedMesh, AnimatedModel, Animation, Bone, Keyframe, Mesh, Meshlet, Meshlets, Model,
+    AnimatedMesh, AnimatedModel, Animation, Bone, Mesh, Meshlet, Meshlets, Model,
     Skeleton, SkinnedVertex, AABB,
 };
 use types::{ANIMATED_MODEL_TABLE, ANIMATION_TABLE, MODEL_TABLE, TEXTURE_TABLE};
@@ -412,11 +412,21 @@ fn process_animated_scene(
         bone_map.insert(bone_name.clone(), bone_index);
 
         let transform = glam::Mat4::from_cols_array(&[
-            node.transformation.a1, node.transformation.a2, node.transformation.a3,
-            node.transformation.a4, node.transformation.b1, node.transformation.b2,
-            node.transformation.b3, node.transformation.b4, node.transformation.c1,
-            node.transformation.c2, node.transformation.c3, node.transformation.c4,
-            node.transformation.d1, node.transformation.d2, node.transformation.d3,
+            node.transformation.a1,
+            node.transformation.a2,
+            node.transformation.a3,
+            node.transformation.a4,
+            node.transformation.b1,
+            node.transformation.b2,
+            node.transformation.b3,
+            node.transformation.b4,
+            node.transformation.c1,
+            node.transformation.c2,
+            node.transformation.c3,
+            node.transformation.c4,
+            node.transformation.d1,
+            node.transformation.d2,
+            node.transformation.d3,
             node.transformation.d4,
         ])
         .transpose();
@@ -425,6 +435,7 @@ fn process_animated_scene(
             name: bone_name,
             parent_index,
             transform,
+            inverse_bind_pose: glam::Mat4::IDENTITY, // Will be filled in later
         });
 
         for child in &*node.children.borrow() {
@@ -435,48 +446,87 @@ fn process_animated_scene(
     if let Some(root) = &scene.root {
         build_skeleton_recursive(root, None, &mut bones, &mut bone_map);
     }
+
+    // 1.5. Populate inverse bind poses
+    for mesh in &scene.meshes {
+        for r_bone in &mesh.bones {
+            if let Some(&bone_index) = bone_map.get(&r_bone.name) {
+                let inverse_bind_pose = glam::Mat4::from_cols_array(&[
+                    r_bone.offset_matrix.a1,
+                    r_bone.offset_matrix.a2,
+                    r_bone.offset_matrix.a3,
+                    r_bone.offset_matrix.a4,
+                    r_bone.offset_matrix.b1,
+                    r_bone.offset_matrix.b2,
+                    r_bone.offset_matrix.b3,
+                    r_bone.offset_matrix.b4,
+                    r_bone.offset_matrix.c1,
+                    r_bone.offset_matrix.c2,
+                    r_bone.offset_matrix.c3,
+                    r_bone.offset_matrix.c4,
+                    r_bone.offset_matrix.d1,
+                    r_bone.offset_matrix.d2,
+                    r_bone.offset_matrix.d3,
+                    r_bone.offset_matrix.d4,
+                ])
+                .transpose();
+                bones[bone_index].inverse_bind_pose = inverse_bind_pose;
+            }
+        }
+    }
+
     let skeleton = Skeleton { bones };
 
     // 2. Process animations
     for anim in &scene.animations {
-        let mut keyframes = Vec::new();
+        let mut channels = Vec::new();
         let ticks_per_second = if anim.ticks_per_second > 0.0 {
             anim.ticks_per_second
         } else {
             25.0 // Default to 25 FPS
         };
 
-        if let Some(node_anim) = anim.channels.get(0) {
-            for i in 0..node_anim.position_keys.len() {
-                let time = node_anim.position_keys[i].time as f32;
-                let mut rotations = Vec::new();
-                let mut translations = Vec::new();
-                let mut scales = Vec::new();
+        for channel in &anim.channels {
+            let position_keys = channel
+                .position_keys
+                .iter()
+                .map(|pk| types::PositionKey {
+                    time: pk.time,
+                    position: glam::vec3(pk.value.x, pk.value.y, pk.value.z),
+                })
+                .collect();
 
-                for channel in &anim.channels {
-                    let pos = channel.position_keys[i].value;
-                    let rot = channel.rotation_keys[i].value;
-                    let scale = channel.scaling_keys[i].value;
+            let rotation_keys = channel
+                .rotation_keys
+                .iter()
+                .map(|rk| types::RotationKey {
+                    time: rk.time,
+                    rotation: glam::quat(rk.value.x, rk.value.y, rk.value.z, rk.value.w),
+                })
+                .collect();
 
-                    translations.push(glam::vec3(pos.x, pos.y, pos.z));
-                    rotations.push(glam::quat(rot.x, rot.y, rot.z, rot.w));
-                    scales.push(glam::vec3(scale.x, scale.y, scale.z));
-                }
+            let scale_keys = channel
+                .scaling_keys
+                .iter()
+                .map(|sk| types::ScaleKey {
+                    time: sk.time,
+                    scale: glam::vec3(sk.value.x, sk.value.y, sk.value.z),
+                })
+                .collect();
 
-                keyframes.push(Keyframe {
-                    time,
-                    rotations,
-                    translations,
-                    scales,
-                });
-            }
+            channels.push(types::AnimationChannel {
+                bone_name: channel.name.clone(),
+                position_keys,
+                rotation_keys,
+                scale_keys,
+            });
         }
 
         let animation = Animation {
             name: anim.name.clone(),
             duration_in_ticks: anim.duration,
             ticks_per_second,
-            keyframes,
+            channels,
         };
         let encoded_animation = bincode::serialize(&animation)?;
         animation_table.insert(anim.name.as_str(), encoded_animation.as_slice())?;
@@ -507,10 +557,16 @@ fn process_animated_scene(
                     bone_indices[j] = *index;
                     bone_weights[j] = *weight;
                 }
+                
+                let normal = if let Some(n) = mesh.normals.get(i) {
+                    glam::vec4(n.x, n.y, n.z, 0.0)
+                } else {
+                    glam::vec4(0.0, 0.0, 0.0, 0.0)
+                };
 
                 SkinnedVertex {
                     position: glam::vec4(v.x, v.y, v.z, 1.0),
-                    normal: glam::vec4(0.0, 0.0, 0.0, 0.0), // Normals will be transformed later
+                    normal,
                     uv: if let Some(uvs) = &mesh.texture_coords[0] {
                         glam::vec2(uvs[i].x, 1.0 - uvs[i].y)
                     } else {

@@ -10,9 +10,10 @@ use std::sync::Arc;
 use crate::{
     config::Config,
     ecs::{
+        animation::{animation_system, AnimationPlayer, BoneMatrices, AnimatedInstance},
         // asset_systems::{patch_instance_data_system, process_asset_loads_system},
         camera::{Camera, OrbitCamera, camera_control_system, update_camera_transform_system},
-        framerate::{FrameRate, frame_rate_system},
+        time::{Time, time_system},
         input::{Input, keyboard_input_system},
         // model::{
         //     SpawnedEntities, initialize_asset_db_system, initialize_fallback_assets_system,
@@ -119,7 +120,7 @@ impl Custom3d {
             .callback_resources
             .insert(tonemapping_bind_group);
 
-        world.init_resource::<FrameRate>();
+        world.init_resource::<Time>();
         world.init_resource::<UiState>();
         world.init_resource::<LastSize>();
         // world.init_resource::<SpawnedEntities>();
@@ -129,6 +130,20 @@ impl Custom3d {
             Transform::default(),
             GlobalTransform::default(),
         ));
+        
+        // Spawn a test animated entity
+        world.spawn((
+            AnimatedInstance {
+                model_name: "Animation_Running_withSkin".to_string(),
+            },
+            AnimationPlayer {
+                animation_name: "Armature|running|baselayer".to_string(),
+                ..Default::default()
+            },
+            BoneMatrices {
+                matrices: Vec::new(),
+            },
+        ));
 
         // --- Main Update Schedule ---
         let mut update_schedule = Schedule::new(Update);
@@ -136,8 +151,9 @@ impl Custom3d {
             (
                 keyboard_input_system,
                 camera_control_system,
-                update_camera_transform_system.after(camera_control_system),
-                frame_rate_system,
+                update_camera_transform_system,
+                time_system,
+                animation_system,
                 ui_system,
                 // update_camera_buffer_system.after(ui_system),
                 // Note: process_spawn_requests_system is removed. Spawning is handled by commands.
