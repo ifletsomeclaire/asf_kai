@@ -24,6 +24,8 @@ pub struct LastSize(pub egui::Vec2);
 pub struct UiState {
     pub render_triangle: bool,
     pub render_model: bool,
+    pub render_static_meshlets: bool,
+    pub render_animated_meshlets: bool,
     // --- Spawner UI State ---
     pub spawner_selected_mesh: String,
     pub spawner_selected_texture: String,
@@ -34,6 +36,8 @@ impl Default for UiState {
         Self {
             render_triangle: false,
             render_model: true,
+            render_static_meshlets: true,
+            render_animated_meshlets: true,
             spawner_selected_mesh: String::new(),
             spawner_selected_texture: String::new(),
         }
@@ -64,6 +68,14 @@ pub fn ui_system(mut p: UiSystemParams) {
         ui.separator();
         ui.checkbox(&mut p.ui_state.render_triangle, "Render Triangle");
         ui.checkbox(&mut p.ui_state.render_model, "Render Model");
+        ui.checkbox(
+            &mut p.ui_state.render_static_meshlets,
+            "Render Static Meshlets",
+        );
+        ui.checkbox(
+            &mut p.ui_state.render_animated_meshlets,
+            "Render Animated Meshlets",
+        );
         if ui.checkbox(&mut p.config.vsync, "V-Sync").changed() {
             p.config.save();
             ui.label("(Requires restart)");
@@ -121,7 +133,7 @@ pub fn ui_system(mut p: UiSystemParams) {
         }
     });
 
-    egui::Window::new("Spawner").show(ctx, |ui| {
+    egui::Window::new("Spawner").show(ctx, |_ui| {
         // --- Mesh Selection ---
         // let mesh_names = p.asset_server.get_mesh_names();
         // if p.ui_state.spawner_selected_mesh.is_empty() {

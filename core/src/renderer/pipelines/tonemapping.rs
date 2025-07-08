@@ -273,7 +273,7 @@ pub fn setup_tonemapping_pass_system(
     });
 }
 
-pub fn _clear_hdr_texture_system(
+pub fn clear_hdr_texture_system(
     device: Res<WgpuDevice>,
     queue: Res<WgpuQueue>,
     hdr_texture: Res<HdrTexture>,

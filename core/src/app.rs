@@ -25,6 +25,7 @@ use crate::{
         core::{WgpuDevice, WgpuQueue, WgpuRenderState},
         events::ResizeEvent,
         pipelines::{
+            d3_animated_pipeline::render_d3_animated_pipeline_system,
             d3_pipeline::render_d3_pipeline_system,
             tonemapping::{
                 resize_hdr_texture_system, setup_tonemapping_pass_system, TonemappingBindGroup,
@@ -158,7 +159,10 @@ impl Custom3d {
             (
                 clear_hdr_texture_system,
                 render_triangle_system.run_if(|ui_state: Res<UiState>| ui_state.render_triangle),
-                render_d3_pipeline_system,
+                render_d3_pipeline_system
+                    .run_if(|ui_state: Res<UiState>| ui_state.render_static_meshlets),
+                render_d3_animated_pipeline_system
+                    .run_if(|ui_state: Res<UiState>| ui_state.render_animated_meshlets),
             )
                 .chain(),
         );

@@ -1,4 +1,3 @@
-use std::borrow::Borrow;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -12,10 +11,13 @@ use russimp::{
     scene::{PostProcess, Scene},
 };
 use std::cell::Ref;
+use std::collections::HashMap;
 
-use types::AABB;
-use types::{Mesh, Meshlet, Meshlets, Model};
-use types::{MODEL_TABLE, TEXTURE_TABLE};
+use types::{
+    AnimatedMesh, AnimatedModel, Animation, Bone, Keyframe, Mesh, Meshlet, Meshlets, Model,
+    Skeleton, SkinnedVertex, AABB,
+};
+use types::{ANIMATED_MODEL_TABLE, ANIMATION_TABLE, MODEL_TABLE, TEXTURE_TABLE};
 
 fn process_node(
     node_rc: &Node,
@@ -201,20 +203,36 @@ impl ModelDatabase {
         {
             let mut model_table = write_txn.open_table(MODEL_TABLE)?;
             let mut texture_table = write_txn.open_table(TEXTURE_TABLE)?;
+            let mut animated_model_table = write_txn.open_table(ANIMATED_MODEL_TABLE)?;
+            let mut animation_table = write_txn.open_table(ANIMATION_TABLE)?;
 
             fn visit_dir(
                 dir: &Path,
                 model_table: &mut redb::Table<&str, &[u8]>,
                 texture_table: &mut redb::Table<&str, &[u8]>,
+                animated_model_table: &mut redb::Table<&str, &[u8]>,
+                animation_table: &mut redb::Table<&str, &[u8]>,
             ) -> Result<(), Box<dyn std::error::Error>> {
                 if dir.is_dir() {
                     for entry in fs::read_dir(dir)? {
                         let entry = entry?;
                         let path = entry.path();
                         if path.is_dir() {
-                            visit_dir(&path, model_table, texture_table)?;
+                            visit_dir(
+                                &path,
+                                model_table,
+                                texture_table,
+                                animated_model_table,
+                                animation_table,
+                            )?;
                         } else {
-                            process_file(&path, model_table, texture_table)?;
+                            process_file(
+                                &path,
+                                model_table,
+                                texture_table,
+                                animated_model_table,
+                                animation_table,
+                            )?;
                         }
                     }
                 }
@@ -225,6 +243,8 @@ impl ModelDatabase {
                 path: &Path,
                 model_table: &mut redb::Table<&str, &[u8]>,
                 texture_table: &mut redb::Table<&str, &[u8]>,
+                animated_model_table: &mut redb::Table<&str, &[u8]>,
+                animation_table: &mut redb::Table<&str, &[u8]>,
             ) -> Result<(), Box<dyn std::error::Error>> {
                 let extension = path.extension().and_then(|s| s.to_str());
                 let file_name = path
@@ -250,39 +270,49 @@ impl ModelDatabase {
                             ],
                         )?;
 
-                        let mut new_textures_to_add: Vec<(String, Vec<u8>)> = Vec::new();
-                        let model_meshes = if let Some(root) = &scene.root {
-                            process_node(
-                                root.borrow(),
-                                &scene,
-                                &glam::Mat4::IDENTITY,
-                                model_name,
-                                &mut new_textures_to_add,
-                            )
-                        } else {
-                            Vec::new()
-                        };
+                        if scene.animations.is_empty() {
+                            let mut new_textures_to_add = Vec::new();
 
-                        let mut model_aabb = AABB::default();
-                        if let Some(first_mesh) = model_meshes.first() {
-                            model_aabb = first_mesh.aabb;
-                            for mesh in model_meshes.iter().skip(1) {
-                                model_aabb.min = model_aabb.min.min(mesh.aabb.min);
-                                model_aabb.max = model_aabb.max.max(mesh.aabb.max);
+                            let meshes = if let Some(root) = &scene.root {
+                                process_node(
+                                    root,
+                                    &scene,
+                                    &glam::Mat4::IDENTITY,
+                                    model_name,
+                                    &mut new_textures_to_add,
+                                )
+                            } else {
+                                Vec::new()
+                            };
+
+                            let mut model_aabb = AABB::default();
+                            if let Some(first_mesh) = meshes.first() {
+                                model_aabb = first_mesh.aabb;
+                                for mesh in meshes.iter().skip(1) {
+                                    model_aabb.min = model_aabb.min.min(mesh.aabb.min);
+                                    model_aabb.max = model_aabb.max.max(mesh.aabb.max);
+                                }
                             }
-                        }
 
-                        let new_model = Model {
-                            name: model_name.to_string(),
-                            meshes: model_meshes,
-                            aabb: model_aabb,
-                        };
+                            let model = Model {
+                                name: model_name.to_string(),
+                                meshes,
+                                aabb: model_aabb,
+                            };
+                            let encoded_model = bincode::serialize(&model)?;
+                            model_table.insert(model_name, encoded_model.as_slice())?;
 
-                        let encoded_model: Vec<u8> = bincode::serialize(&new_model)?;
-                        model_table.insert(model_name, encoded_model.as_slice())?;
-
-                        for (name, data) in new_textures_to_add {
-                            texture_table.insert(name.as_str(), data.as_slice())?;
+                            for (texture_name, texture_data) in new_textures_to_add {
+                                texture_table.insert(texture_name.as_str(), texture_data.as_slice())?;
+                            }
+                        } else {
+                            process_animated_scene(
+                                &scene,
+                                model_name,
+                                animated_model_table,
+                                animation_table,
+                                texture_table,
+                            )?;
                         }
                     }
                     Some("png") => {
@@ -297,7 +327,7 @@ impl ModelDatabase {
                 Ok(())
             }
 
-            visit_dir(assets_dir.as_ref(), &mut model_table, &mut texture_table)?;
+            visit_dir(assets_dir.as_ref(), &mut model_table, &mut texture_table, &mut animated_model_table, &mut animation_table)?;
         }
         write_txn.commit()?;
         Ok(())
@@ -355,5 +385,222 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("Could not retrieve model 'cube'");
     }
 
+    Ok(())
+}
+
+fn process_animated_scene(
+    scene: &Scene,
+    model_name: &str,
+    animated_model_table: &mut redb::Table<&str, &[u8]>,
+    animation_table: &mut redb::Table<&str, &[u8]>,
+    texture_table: &mut redb::Table<&str, &[u8]>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("[DB] Processing animated model: {model_name}");
+
+    // 1. Build skeleton and bone map
+    let mut bones = Vec::new();
+    let mut bone_map = HashMap::new();
+
+    fn build_skeleton_recursive(
+        node: &Node,
+        parent_index: Option<usize>,
+        bones: &mut Vec<Bone>,
+        bone_map: &mut HashMap<String, usize>,
+    ) {
+        let bone_name = node.name.clone();
+        let bone_index = bones.len();
+        bone_map.insert(bone_name.clone(), bone_index);
+
+        let transform = glam::Mat4::from_cols_array(&[
+            node.transformation.a1, node.transformation.a2, node.transformation.a3,
+            node.transformation.a4, node.transformation.b1, node.transformation.b2,
+            node.transformation.b3, node.transformation.b4, node.transformation.c1,
+            node.transformation.c2, node.transformation.c3, node.transformation.c4,
+            node.transformation.d1, node.transformation.d2, node.transformation.d3,
+            node.transformation.d4,
+        ])
+        .transpose();
+
+        bones.push(Bone {
+            name: bone_name,
+            parent_index,
+            transform,
+        });
+
+        for child in &*node.children.borrow() {
+            build_skeleton_recursive(child, Some(bone_index), bones, bone_map);
+        }
+    }
+
+    if let Some(root) = &scene.root {
+        build_skeleton_recursive(root, None, &mut bones, &mut bone_map);
+    }
+    let skeleton = Skeleton { bones };
+
+    // 2. Process animations
+    for anim in &scene.animations {
+        let mut keyframes = Vec::new();
+        let ticks_per_second = if anim.ticks_per_second > 0.0 {
+            anim.ticks_per_second
+        } else {
+            25.0 // Default to 25 FPS
+        };
+
+        if let Some(node_anim) = anim.channels.get(0) {
+            for i in 0..node_anim.position_keys.len() {
+                let time = node_anim.position_keys[i].time as f32;
+                let mut rotations = Vec::new();
+                let mut translations = Vec::new();
+                let mut scales = Vec::new();
+
+                for channel in &anim.channels {
+                    let pos = channel.position_keys[i].value;
+                    let rot = channel.rotation_keys[i].value;
+                    let scale = channel.scaling_keys[i].value;
+
+                    translations.push(glam::vec3(pos.x, pos.y, pos.z));
+                    rotations.push(glam::quat(rot.x, rot.y, rot.z, rot.w));
+                    scales.push(glam::vec3(scale.x, scale.y, scale.z));
+                }
+
+                keyframes.push(Keyframe {
+                    time,
+                    rotations,
+                    translations,
+                    scales,
+                });
+            }
+        }
+
+        let animation = Animation {
+            name: anim.name.clone(),
+            duration_in_ticks: anim.duration,
+            ticks_per_second,
+            keyframes,
+        };
+        let encoded_animation = bincode::serialize(&animation)?;
+        animation_table.insert(anim.name.as_str(), encoded_animation.as_slice())?;
+    }
+
+    // 3. Process meshes
+    let mut animated_meshes = Vec::new();
+    for (mesh_index, mesh) in scene.meshes.iter().enumerate() {
+        let mut vertex_bone_data: Vec<Vec<(u32, f32)>> = vec![Vec::new(); mesh.vertices.len()];
+        for r_bone in &mesh.bones {
+            let bone_name = r_bone.name.clone();
+            if let Some(&bone_index) = bone_map.get(&bone_name) {
+                for weight in &r_bone.weights {
+                    vertex_bone_data[weight.vertex_id as usize].push((bone_index as u32, weight.weight));
+                }
+            }
+        }
+
+        let vertices: Vec<SkinnedVertex> = mesh
+            .vertices
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let mut bone_indices = [0u32; 4];
+                let mut bone_weights = [0.0f32; 4];
+                let bone_data = &vertex_bone_data[i];
+                for (j, (index, weight)) in bone_data.iter().enumerate().take(4) {
+                    bone_indices[j] = *index;
+                    bone_weights[j] = *weight;
+                }
+
+                SkinnedVertex {
+                    position: glam::vec4(v.x, v.y, v.z, 1.0),
+                    normal: glam::vec4(0.0, 0.0, 0.0, 0.0), // Normals will be transformed later
+                    uv: if let Some(uvs) = &mesh.texture_coords[0] {
+                        glam::vec2(uvs[i].x, 1.0 - uvs[i].y)
+                    } else {
+                        glam::vec2(0.0, 0.0)
+                    },
+                    bone_indices,
+                    bone_weights,
+                    _padding: [0.0; 2],
+                }
+            })
+            .collect();
+
+        let indices: Vec<u32> = mesh.faces.iter().flat_map(|f| f.0.clone()).collect();
+
+        let meshlets = {
+            const MAX_VERTICES: usize = 64;
+            const MAX_TRIANGLES: usize = 128;
+            let vertex_stride = std::mem::size_of::<SkinnedVertex>();
+            let vertex_data_bytes = bytemuck::cast_slice(&vertices);
+            let adapter = VertexDataAdapter::new(vertex_data_bytes, vertex_stride, 0).unwrap();
+            let meshlets_result = build_meshlets(&indices, &adapter, MAX_VERTICES, MAX_TRIANGLES, 0.0);
+            let converted_meshlets = meshlets_result
+                .meshlets
+                .iter()
+                .map(|m| Meshlet {
+                    vertex_offset: m.vertex_offset,
+                    triangle_offset: m.triangle_offset,
+                    vertex_count: m.vertex_count,
+                    triangle_count: m.triangle_count,
+                })
+                .collect();
+            Some(Meshlets {
+                meshlets: converted_meshlets,
+                vertices: meshlets_result.vertices,
+                triangles: meshlets_result.triangles,
+            })
+        };
+
+        let mut aabb = AABB::default();
+        if let Some(first_vtx) = vertices.first() {
+            aabb.min = first_vtx.position;
+            aabb.max = first_vtx.position;
+            for v in vertices.iter().skip(1) {
+                aabb.min = aabb.min.min(v.position);
+                aabb.max = aabb.max.max(v.position);
+            }
+        }
+        
+        let material = &scene.materials[mesh.material_index as usize];
+        let mut texture_name = None;
+
+        if let Some(texture_ref) = material.textures.get(&TextureType::Diffuse) {
+            let texture: Ref<Texture> = (**texture_ref).borrow();
+            if let russimp::material::DataContent::Bytes(bytes) = &texture.data {
+                let new_name = format!("{model_name}-mesh-{mesh_index}_diffuse.png");
+                texture_table.insert(new_name.as_str(), bytes.as_slice())?;
+                texture_name = Some(new_name);
+            }
+        }
+
+
+        animated_meshes.push(AnimatedMesh {
+            name: format!("{model_name}-mesh-{mesh_index}"),
+            vertices,
+            indices,
+            texture_name,
+            meshlets,
+            aabb,
+        });
+    }
+
+    let mut model_aabb = AABB::default();
+    if let Some(first_mesh) = animated_meshes.first() {
+        model_aabb = first_mesh.aabb;
+        for mesh in animated_meshes.iter().skip(1) {
+            model_aabb.min = model_aabb.min.min(mesh.aabb.min);
+            model_aabb.max = model_aabb.max.max(mesh.aabb.max);
+        }
+    }
+
+    let animated_model = AnimatedModel {
+        name: model_name.to_string(),
+        meshes: animated_meshes,
+        skeleton,
+        aabb: model_aabb,
+    };
+
+    let encoded_model = bincode::serialize(&animated_model)?;
+    animated_model_table.insert(model_name, encoded_model.as_slice())?;
+
+    println!("[DB] Successfully processed animated model: {model_name}");
     Ok(())
 }
