@@ -5,6 +5,7 @@ use bevy_transform::{
     systems::{mark_dirty_trees, propagate_parent_transforms, sync_simple_transforms},
 };
 use eframe::egui::{self};
+use glam::Mat4;
 use std::sync::Arc;
 
 use crate::{
@@ -26,7 +27,7 @@ use crate::{
         core::{WgpuDevice, WgpuQueue, WgpuRenderState},
         events::ResizeEvent,
         pipelines::{
-            d3_animated_pipeline::render_d3_animated_pipeline_system,
+            d3_animated_pipeline::{self, render_d3_animated_pipeline_system, D3AnimatedPipeline, CameraUniformBuffer, BoneMatrixStorageBuffer},
             d3_pipeline::render_d3_pipeline_system,
             tonemapping::{
                 resize_hdr_texture_system, setup_tonemapping_pass_system, TonemappingBindGroup,
@@ -78,6 +79,30 @@ impl Custom3d {
         world.init_resource::<OrbitCamera>();
         world.init_resource::<AssetServer>();
         world.insert_resource(EguiCtx(cc.egui_ctx.clone()));
+
+        // --- Create persistent resources ---
+        let asset_server = world.resource::<AssetServer>();
+        let d3_animated_pipeline = D3AnimatedPipeline::new(
+            &device,
+            &asset_server,
+            wgpu::TextureFormat::Rgba16Float,
+        );
+        let camera_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("camera_uniform_buffer"),
+            size: std::mem::size_of::<Mat4>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bone_matrix_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("bone_matrix_buffer"),
+            size: (std::mem::size_of::<Mat4>() * 128) as u64, // Max bones
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        world.insert_resource(d3_animated_pipeline);
+        world.insert_resource(CameraUniformBuffer(camera_uniform_buffer));
+        world.insert_resource(BoneMatrixStorageBuffer(bone_matrix_buffer));
 
         // --- Startup Schedule ---
         let mut startup_schedule = Schedule::new(Startup);

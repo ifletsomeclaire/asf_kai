@@ -29,6 +29,8 @@ pub struct AnimatedMeshletManager {
 
     pub mesh_bind_group_layout: Option<wgpu::BindGroupLayout>,
     pub mesh_bind_group: Option<wgpu::BindGroup>,
+    pub instance_bind_group_layout: Option<wgpu::BindGroupLayout>,
+    pub instance_bind_group: Option<wgpu::BindGroup>,
 }
 
 impl AnimatedMeshletManager {
@@ -155,7 +157,7 @@ impl AnimatedMeshletManager {
 
         let mesh_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Animated Mesh and Instance Data Bind Group Layout"),
+                label: Some("Animated Mesh Data Bind Group Layout"),
                 entries: &[
                     // Static Mesh Data
                     wgpu::BindGroupLayoutEntry { // vertices
@@ -198,32 +200,11 @@ impl AnimatedMeshletManager {
                         },
                         count: None,
                     },
-                    // Instance Data
-                    wgpu::BindGroupLayoutEntry { // indirection_buffer
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry { // transform_buffer
-                        binding: 5,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
                 ],
             });
 
         let mesh_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Animated Mesh and Instance Bind Group"),
+            label: Some("Animated Mesh Bind Group"),
             layout: &mesh_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -251,26 +232,60 @@ impl AnimatedMeshletManager {
                         .unwrap()
                         .as_entire_binding(),
                 },
+            ],
+        });
+
+        let instance_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Animated Instance Data Bind Group Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        let instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Animated Instance Bind Group"),
+            layout: &instance_bind_group_layout,
+            entries: &[
                 wgpu::BindGroupEntry {
-                    binding: 4,
+                    binding: 0,
                     resource: indirection_buffer.as_ref().unwrap().as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
-                    binding: 5,
+                    binding: 1,
                     resource: transform_buffer.as_ref().unwrap().as_entire_binding(),
                 },
             ],
         });
 
         Self {
+            skeletons,
+            animations,
             vertices: all_vertices,
             meshlet_vertex_indices: all_meshlet_vertex_indices,
             meshlet_triangle_indices: all_meshlet_triangle_indices,
             meshlets: all_meshlets,
             transforms,
             draw_commands,
-            skeletons,
-            animations,
 
             vertex_buffer,
             meshlet_vertex_index_buffer,
@@ -281,6 +296,8 @@ impl AnimatedMeshletManager {
 
             mesh_bind_group_layout: Some(mesh_bind_group_layout),
             mesh_bind_group: Some(mesh_bind_group),
+            instance_bind_group_layout: Some(instance_bind_group_layout),
+            instance_bind_group: Some(instance_bind_group),
         }
     }
 } 

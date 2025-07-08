@@ -59,17 +59,17 @@ pub fn animation_system(
             
             let animation_time_in_ticks = player.current_time as f64 * animation.ticks_per_second;
 
-            if let Some(skeleton) = asset_server.animated_meshlet_manager.skeletons.get(&instance.model_name) {
-                let mut global_poses: Vec<Mat4> = vec![Mat4::IDENTITY; skeleton.bones.len()];
+            if let Some(skeleton) = &asset_server.animated_meshlet_manager.skeletons.get(&instance.model_name) {
+                // Calculate local pose for each bone
+                let local_poses: Vec<Mat4> = skeleton.bones.iter().map(|bone| {
+                    calculate_bone_transform(animation, &bone.name, animation_time_in_ticks, bone.transform)
+                }).collect();
 
                 // Calculate global pose for each bone
+                let mut global_poses = vec![Mat4::IDENTITY; skeleton.bones.len()];
                 for (i, bone) in skeleton.bones.iter().enumerate() {
-                    let local_transform = calculate_bone_transform(animation, bone.name.as_str(), animation_time_in_ticks);
-                    
-                    if let Some(parent_index) = bone.parent_index {
-                        global_poses[i] = global_poses[parent_index] * local_transform;
-                    } else {
-                        global_poses[i] = local_transform;
+                    if bone.parent_index.is_none() {
+                        calculate_global_pose_recursive(i, skeleton, &local_poses, &mut global_poses);
                     }
                 }
 
@@ -83,7 +83,7 @@ pub fn animation_system(
     }
 }
 
-fn calculate_bone_transform(animation: &Animation, bone_name: &str, time_in_ticks: f64) -> Mat4 {
+fn calculate_bone_transform(animation: &Animation, bone_name: &str, time_in_ticks: f64, default_transform: Mat4) -> Mat4 {
     // Find the channel for the given bone
     if let Some(channel) = animation.channels.iter().find(|c| c.bone_name == bone_name) {
         // Interpolate position, rotation, and scale
@@ -93,8 +93,29 @@ fn calculate_bone_transform(animation: &Animation, bone_name: &str, time_in_tick
 
         Mat4::from_scale_rotation_translation(scale, rotation, position)
     } else {
-        // If no animation channel affects this bone, return identity
-        Mat4::IDENTITY
+        // If no animation channel affects this bone, return the bone's bind pose transform
+        default_transform
+    }
+}
+
+fn calculate_global_pose_recursive(
+    bone_index: usize,
+    skeleton: &types::Skeleton,
+    local_poses: &[Mat4],
+    global_poses: &mut [Mat4],
+) {
+    let bone = &skeleton.bones[bone_index];
+    let parent_pose = bone.parent_index
+        .map(|idx| global_poses[idx])
+        .unwrap_or(Mat4::IDENTITY);
+
+    global_poses[bone_index] = parent_pose * local_poses[bone_index];
+
+    // Find and recurse for all children of this bone
+    for (i, child_bone) in skeleton.bones.iter().enumerate() {
+        if child_bone.parent_index == Some(bone_index) {
+            calculate_global_pose_recursive(i, skeleton, local_poses, global_poses);
+        }
     }
 }
 

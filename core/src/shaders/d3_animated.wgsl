@@ -31,15 +31,15 @@ struct VSOutput {
 //-- Bindings ------------------------------------------------------------------
 
 @group(0) @binding(0) var<uniform> camera: mat4x4<f32>;
+@group(0) @binding(1) var<storage, read> bone_matrices: array<mat4x4<f32>>;
 
 @group(1) @binding(0) var<storage, read> vertices: array<SkinnedVertex>;
 @group(1) @binding(1) var<storage, read> meshlet_vertex_indices: array<u32>;
 @group(1) @binding(2) var<storage, read> meshlet_triangle_indices: array<u32>;
 @group(1) @binding(3) var<storage, read> meshlet_descriptions: array<MeshletDescription>;
-@group(1) @binding(4) var<storage, read> indirection_buffer: array<DrawCommand>;
-@group(1) @binding(5) var<storage, read> transform_buffer: array<mat4x4<f32>>;
 
-@group(2) @binding(0) var<storage, read> bone_matrices: array<mat4x4<f32>>;
+@group(2) @binding(0) var<storage, read> indirection_buffer: array<DrawCommand>;
+@group(2) @binding(1) var<storage, read> transform_buffer: array<mat4x4<f32>>;
 
 @group(3) @binding(0) var texture_array: texture_2d_array<f32>;
 @group(3) @binding(1) var texture_sampler: sampler;

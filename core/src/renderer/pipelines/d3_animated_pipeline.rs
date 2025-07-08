@@ -1,5 +1,5 @@
 use bevy_ecs::{
-    prelude::{Res, Query},
+    prelude::{Res, Query, Resource},
 };
 use bevy_transform::components::GlobalTransform;
 use wgpu::{include_wgsl, util::DeviceExt, PipelineCompilationOptions};
@@ -13,11 +13,18 @@ use crate::{
     },
 };
 
+#[derive(Resource)]
 pub struct D3AnimatedPipeline {
     pub pipeline: wgpu::RenderPipeline,
     pub camera_bind_group_layout: wgpu::BindGroupLayout,
-    pub bone_matrix_bind_group_layout: wgpu::BindGroupLayout,
 }
+
+#[derive(Resource)]
+pub struct CameraUniformBuffer(pub wgpu::Buffer);
+
+#[derive(Resource)]
+pub struct BoneMatrixStorageBuffer(pub wgpu::Buffer);
+
 
 impl D3AnimatedPipeline {
     pub fn new(
@@ -29,40 +36,45 @@ impl D3AnimatedPipeline {
 
         let camera_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
-                label: Some("camera_bind_group_layout"),
-            });
-            
-        let bone_matrix_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
-                label: Some("bone_matrix_bind_group_layout"),
+                ],
+                label: Some("camera_and_bones_bind_group_layout"),
             });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("D3 Animated Pipeline Layout"),
             bind_group_layouts: &[
                 &camera_bind_group_layout,
-                asset_server.animated_meshlet_manager.mesh_bind_group_layout.as_ref().unwrap(),
-                &bone_matrix_bind_group_layout,
+                asset_server
+                    .animated_meshlet_manager
+                    .mesh_bind_group_layout
+                    .as_ref()
+                    .unwrap(),
+                asset_server
+                    .animated_meshlet_manager
+                    .instance_bind_group_layout
+                    .as_ref()
+                    .unwrap(),
                 asset_server.texture_bind_group_layout.as_ref().unwrap(),
             ],
             push_constant_ranges: &[],
@@ -115,7 +127,6 @@ impl D3AnimatedPipeline {
         Self {
             pipeline,
             camera_bind_group_layout,
-            bone_matrix_bind_group_layout,
         }
     }
 }
@@ -123,9 +134,12 @@ impl D3AnimatedPipeline {
 pub fn render_d3_animated_pipeline_system(
     device: Res<WgpuDevice>,
     queue: Res<WgpuQueue>,
+    pipeline: Res<D3AnimatedPipeline>,
     asset_server: Res<AssetServer>,
     depth_texture: Res<DepthTexture>,
     hdr_texture: Res<HdrTexture>,
+    camera_buffer: Res<CameraUniformBuffer>,
+    bone_buffer: Res<BoneMatrixStorageBuffer>,
     camera_query: Query<(&Camera, &GlobalTransform)>,
     bone_matrix_query: Query<&BoneMatrices>,
 ) {
@@ -136,52 +150,32 @@ pub fn render_d3_animated_pipeline_system(
     let Ok((camera, transform)) = camera_query.single() else {
         return;
     };
-    
+
     let Ok(bone_matrices) = bone_matrix_query.single() else {
         return;
     };
 
-    let pipeline = D3AnimatedPipeline::new(
-        &device,
-        &asset_server,
-        wgpu::TextureFormat::Rgba16Float,
-    );
-
     let view = transform.compute_matrix().inverse();
     let proj = camera.projection_matrix();
     let view_proj = proj * view;
+    queue.write_buffer(&camera_buffer.0, 0, bytemuck::cast_slice(view_proj.as_ref()));
 
-    let camera_uniform_buffer =
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("camera_uniform_buffer"),
-            contents: bytemuck::cast_slice(view_proj.as_ref()),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
+    queue.write_buffer(&bone_buffer.0, 0, bytemuck::cast_slice(&bone_matrices.matrices));
 
     let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("camera_bind_group"),
+        label: Some("camera_and_bones_bind_group"),
         layout: &pipeline.camera_bind_group_layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: camera_uniform_buffer.as_entire_binding(),
-        }],
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.0.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: bone_buffer.0.as_entire_binding(),
+            },
+        ],
     });
-    
-    let bone_matrix_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("bone_matrix_buffer"),
-        contents: bytemuck::cast_slice(&bone_matrices.matrices),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-
-    let bone_matrix_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("bone_matrix_bind_group"),
-        layout: &pipeline.bone_matrix_bind_group_layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: bone_matrix_buffer.as_entire_binding(),
-        }],
-    });
-
 
     let mut encoder =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -202,21 +196,40 @@ pub fn render_d3_animated_pipeline_system(
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &depth_texture.view,
                 depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
+                    load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
                 }),
                 stencil_ops: None,
             }),
-            occlusion_query_set: None,
             timestamp_writes: None,
+            occlusion_query_set: None,
         });
 
         render_pass.set_pipeline(&pipeline.pipeline);
         render_pass.set_bind_group(0, &camera_bind_group, &[]);
-        render_pass.set_bind_group(1, asset_server.animated_meshlet_manager.mesh_bind_group.as_ref().unwrap(), &[]);
-        render_pass.set_bind_group(2, &bone_matrix_bind_group, &[]);
-        render_pass.set_bind_group(3, asset_server.texture_bind_group.as_ref().unwrap(), &[]);
-        
+        render_pass.set_bind_group(
+            1,
+            asset_server
+                .animated_meshlet_manager
+                .mesh_bind_group
+                .as_ref()
+                .unwrap(),
+            &[],
+        );
+        render_pass.set_bind_group(
+            2,
+            asset_server
+                .animated_meshlet_manager
+                .instance_bind_group
+                .as_ref()
+                .unwrap(),
+            &[],
+        );
+        render_pass.set_bind_group(
+            3,
+            asset_server.texture_bind_group.as_ref().unwrap(),
+            &[],
+        );
         render_pass.draw(
             0..(128 * 3),
             0..asset_server.animated_meshlet_manager.draw_commands.len() as u32,
