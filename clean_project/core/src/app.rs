@@ -139,22 +139,36 @@ impl Custom3d {
         ));
 
         // Spawn a test animated entity
+        let model_names = [
+            "Animation_Running_withSkin",
+            "Animation_Walking_withSkin", 
+            "Animation_RunFast_withSkin",
+            "Animation_Axe_Spin_Attack_withSkin",
+        ];
+        
         let animations = [
             "Armature|running|baselayer",
-            "Armature|walking|baselayer",
+            "Armature|walking|baselayer", 
             "Armature|idle|baselayer",
             "Armature|jumping|baselayer",
         ];
 
-        // Spawn one instance for each animation type
-        for (i, anim_name) in animations.iter().enumerate() {
+        // Debug: Print available animated models
+        let asset_server = world.resource::<AssetServer>();
+        println!("[App] Available animated models:");
+        for model_name in asset_server.animated_meshlet_manager.model_meshlets.keys() {
+            println!("  - {}", model_name);
+        }
+
+        // Spawn one instance for each model type
+        for (i, (model_name, anim_name)) in model_names.iter().zip(animations.iter()).enumerate() {
              // Create a slight offset for each model so they don't overlap
             let mut transform = Transform::from_xyz(i as f32 * 2.0, 0.0, 0.0);
             transform.scale = glam::Vec3::splat(0.01); // Adjust scale if models are too large
 
             world.spawn((
                 AnimatedInstance {
-                    model_name: "Animation_Running_withSkin".to_string(),
+                    model_name: model_name.to_string(),
                 },
                 AnimationPlayer {
                     animation_name: anim_name.to_string(),

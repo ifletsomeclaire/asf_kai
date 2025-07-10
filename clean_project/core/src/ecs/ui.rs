@@ -138,7 +138,57 @@ pub fn ui_system(mut p: UiSystemParams) {
         }
     });
 
-   
+    egui::Window::new("Spawner").show(ctx, |_ui| {
+        // --- Mesh Selection ---
+        // let mesh_names = p.asset_server.get_mesh_names();
+        // if p.ui_state.spawner_selected_mesh.is_empty() {
+        //     p.ui_state.spawner_selected_mesh = mesh_names.first().cloned().unwrap_or_default();
+        // }
+        // egui::ComboBox::from_label("Mesh")
+        //     .selected_text(p.ui_state.spawner_selected_mesh.clone())
+        //     .show_ui(ui, |ui| {
+        //         for name in mesh_names {
+        //             ui.selectable_value(&mut p.ui_state.spawner_selected_mesh, name.clone(), name);
+        //         }
+        //     });
+
+        // --- Texture Selection ---
+        // let texture_names = p.asset_server.get_texture_names();
+        // if p.ui_state.spawner_selected_texture.is_empty() {
+        //     p.ui_state.spawner_selected_texture =
+        //         texture_names.first().cloned().unwrap_or_default();
+        // }
+        // egui::ComboBox::from_label("Texture")
+        //     .selected_text(p.ui_state.spawner_selected_texture.clone())
+        //     .show_ui(ui, |ui| {
+        //         for name in texture_names {
+        //             ui.selectable_value(
+        //                 &mut p.ui_state.spawner_selected_texture,
+        //                 name.clone(),
+        //                 name,
+        //             );
+        //         }
+        //     });
+
+        // ui.separator();
+
+        // if ui.button("Spawn").clicked()
+        //     && !p.ui_state.spawner_selected_mesh.is_empty()
+        //     && !p.ui_state.spawner_selected_texture.is_empty()
+        // {
+        //     p.commands.queue(SpawnInstance {
+        //         transform: GlobalTransform::default(),
+        //         mesh_name: p.ui_state.spawner_selected_mesh.clone(),
+        //         texture_name: p.ui_state.spawner_selected_texture.clone(),
+        //     });
+        // }
+
+        // if ui.button("Despawn Last").clicked() {
+        //     if let Some(entity) = p.spawned_entities.0.pop() {
+        //         p.commands.queue(DespawnInstance { entity });
+        //     }
+        // }
+    });
 
     egui::CentralPanel::default().show(ctx, |ui| {
         let rect = ui.max_rect();

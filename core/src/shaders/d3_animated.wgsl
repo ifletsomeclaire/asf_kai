@@ -45,8 +45,7 @@ struct VSOutput {
 
 // @group(2): Per-Draw Data
 @group(2) @binding(0) var<storage, read> indirection_buffer: array<AnimatedDrawCommand>;
-@group(2) @binding(1) var<storage, read> bone_matrices: array<mat4x4<f32>>;
-@group(2) @binding(2) var<storage, read> transform_buffer: array<mat4x4<f32>>;
+@group(2) @binding(1) var<storage, read> bone_matrices: array<mat4x4<f32>>; // Bone matrices now include world transform
 
 // @group(3): Texture Data (provided by AssetServer)
 @group(3) @binding(0) var texture_array: texture_2d_array<f32>;
@@ -125,15 +124,15 @@ fn vs_main(
     }
 
     // 6. Apply transformations.
-    let model_transform = transform_buffer[command.transform_id];
+    // The bone matrices now include the world transform, so we don't need to apply model_transform again
     let skinned_pos = skin_transform * vertex.position;
-    let world_pos = model_transform * skinned_pos;
+    let world_pos = skinned_pos; // Bone matrices already include world transform
 
     output.clip_position = camera * world_pos;
     
     // Safely calculate the world normal
     let skinned_normal = skin_transform * vec4<f32>(vertex.normal.xyz, 0.0);
-    let world_normal_unnormalized = (model_transform * skinned_normal).xyz;
+    let world_normal_unnormalized = skinned_normal.xyz; // Bone matrices already include world transform
 
     // Prevent normalization of a zero vector
     if (length(world_normal_unnormalized) > 0.0001) {

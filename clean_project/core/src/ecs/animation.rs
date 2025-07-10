@@ -1,4 +1,5 @@
 use bevy_ecs::prelude::*;
+use bevy_transform::components::GlobalTransform;
 use glam::{Mat4, Quat, Vec3};
 use crate::ecs::time::Time;
 use crate::renderer::assets::AssetServer;
@@ -38,9 +39,9 @@ pub struct AnimatedInstance {
 pub fn animation_system(
     time: Res<Time>,
     asset_server: Res<AssetServer>,
-    mut query: Query<(&mut AnimationPlayer, &mut BoneMatrices, &AnimatedInstance)>,
+    mut query: Query<(&mut AnimationPlayer, &mut BoneMatrices, &AnimatedInstance, &GlobalTransform)>,
 ) {
-    for (mut player, mut bone_matrices, instance) in query.iter_mut() {
+    for (mut player, mut bone_matrices, instance, transform) in query.iter_mut() {
         if !player.playing {
             continue;
         }
@@ -58,6 +59,7 @@ pub fn animation_system(
             }
             
             let animation_time_in_ticks = player.current_time as f64 * animation.ticks_per_second;
+            let model_matrix = transform.compute_matrix(); // Get the entity's world transform matrix
 
             if let Some(skeleton) = &asset_server.animated_meshlet_manager.skeletons.get(&instance.model_name) {
                 // Calculate local pose for each bone
@@ -74,10 +76,11 @@ pub fn animation_system(
                     global_poses[i] = parent_pose * local_poses[i];
                 }
 
-                // Calculate final skinning matrices
+                // Calculate final skinning matrices with world transform applied
                 bone_matrices.matrices.resize(256, Mat4::IDENTITY);
                 for (i, bone) in skeleton.bones.iter().enumerate() {
-                    bone_matrices.matrices[i] = global_poses[i] * bone.inverse_bind_pose;
+                    // Pre-multiply by the entity's world transform to get world-space bone matrices
+                    bone_matrices.matrices[i] = model_matrix * global_poses[i] * bone.inverse_bind_pose;
                 }
             }
         }

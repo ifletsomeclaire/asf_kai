@@ -12,20 +12,14 @@ use crate::{
         camera::Camera,
     },
     renderer::{
-        assets::AssetServer,
+        assets::{
+            animated_meshlet::AnimatedDrawCommand,
+            AssetServer,
+        },
         core::{WgpuDevice, WgpuQueue},
         pipelines::tonemapping::{DepthTexture, HdrTexture},
     },
 };
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Pod, Zeroable)]
-struct AnimatedDrawCommand {
-    meshlet_id: u32,
-    bone_set_id: u32, // An index pointing to the start of a block of 256 matrices
-    transform_id: u32,
-    texture_id: u32,
-}
 
 #[derive(Resource)]
 pub struct D3AnimatedPipeline {
@@ -73,17 +67,7 @@ impl D3AnimatedPipeline {
                         count: None,
                     },
                     wgpu::BindGroupLayoutEntry {
-                        binding: 1, // Bone Matrices
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2, // Transform Buffer
+                        binding: 1, // Bone Matrices (now include world transform)
                         visibility: wgpu::ShaderStages::VERTEX,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -187,21 +171,20 @@ pub fn render_d3_animated_pipeline_system(
     // --- 1. Prepare Per-Frame Data (Dynamically) ---
     let mut draw_commands = Vec::new();
     let mut all_bone_matrices = Vec::new();
-    let mut all_transforms = Vec::new();
 
     // Track bone matrix offsets for each instance
     let mut bone_matrix_offsets = Vec::new();
     
     // Iterate over the entities that are actually in the scene right now.
-    for (instance_index, (instance, bone_matrices, transform)) in
+    for (instance_index, (instance, bone_matrices, _transform)) in
         animated_instance_query.iter().enumerate()
     {
-        // Add the current entity's transform to our list for this frame.
-        all_transforms.push(transform.compute_matrix());
-        let transform_id = (all_transforms.len() - 1) as u32;
+        // Note: We no longer need to track transforms separately since bone matrices include world transform
 
         // Track where this instance's bone matrices start
         let bone_matrix_offset = all_bone_matrices.len() as u32;
+        println!("  Instance[{}] '{}': bone_matrix_offset = {} (adding {} matrices)", 
+            instance_index, instance.model_name, bone_matrix_offset, bone_matrices.matrices.len());
         bone_matrix_offsets.push(bone_matrix_offset);
         
         // Add this instance's bone matrices
@@ -209,17 +192,29 @@ pub fn render_d3_animated_pipeline_system(
 
         // Find the meshlets associated with this instance's model name.
         if let Some(model_meshlets_list) = animated_meshlet_manager.model_meshlets.get(&instance.model_name) {
-            for model_meshlets in model_meshlets_list {
-                for &meshlet_id in &model_meshlets.meshlet_indices {
+            println!("  Creating draw commands for model '{}' (instance {}):", instance.model_name, instance_index);
+            for (meshlet_group_idx, model_meshlets) in model_meshlets_list.iter().enumerate() {
+                println!("    Meshlet group {}: {} meshlets, texture_id={}", 
+                    meshlet_group_idx, model_meshlets.meshlet_indices.len(), model_meshlets.texture_id);
+                for (meshlet_idx, &meshlet_id) in model_meshlets.meshlet_indices.iter().enumerate() {
+                    if meshlet_idx < 3 { // Only print first 3 for brevity
+                        println!("      Meshlet[{}]: id={}, bone_set_id={}", 
+                            meshlet_idx, meshlet_id, bone_matrix_offset);
+                    }
                     // Create a new draw command with the correct, frame-specific IDs.
                     draw_commands.push(AnimatedDrawCommand {
                         meshlet_id,
                         bone_set_id: bone_matrix_offset, // Use actual offset, not instance index
-                        transform_id,
+                        transform_id: 0, // No longer used since bone matrices include world transform
                         texture_id: model_meshlets.texture_id,
                     });
                 }
+                if model_meshlets.meshlet_indices.len() > 3 {
+                    println!("      ... and {} more meshlets", model_meshlets.meshlet_indices.len() - 3);
+                }
             }
+        } else {
+            println!("  WARNING: No meshlets found for model '{}'", instance.model_name);
         }
     }
 
@@ -237,7 +232,25 @@ pub fn render_d3_animated_pipeline_system(
         );
     }
     println!("[Animated Render] Total bone matrices: {}", all_bone_matrices.len());
-    println!("[Animated Render] Total transforms: {}", all_transforms.len());
+    
+    println!("\n[Animated Render] Bone matrix layout:");
+    let mut offset = 0;
+    for (i, (instance, bone_matrices, _)) in animated_instance_query.iter().enumerate() {
+        println!("  Instance[{}] '{}': offset={}, count={}", 
+            i, instance.model_name, offset, bone_matrices.matrices.len());
+        offset += bone_matrices.matrices.len();
+    }
+    
+    println!("\n[Animated Render] Draw command summary:");
+    println!("  Total draw commands: {}", draw_commands.len());
+    if !draw_commands.is_empty() {
+        println!("  First draw command: meshlet_id={}, bone_set_id={}, transform_id={}, texture_id={}", 
+            draw_commands[0].meshlet_id, draw_commands[0].bone_set_id, 
+            draw_commands[0].transform_id, draw_commands[0].texture_id);
+        println!("  Last draw command: meshlet_id={}, bone_set_id={}, transform_id={}, texture_id={}", 
+            draw_commands[draw_commands.len()-1].meshlet_id, draw_commands[draw_commands.len()-1].bone_set_id, 
+            draw_commands[draw_commands.len()-1].transform_id, draw_commands[draw_commands.len()-1].texture_id);
+    }
 
     // --- 2. Update GPU Buffers ---
     let view_proj = camera.projection_matrix() * camera_transform.compute_matrix().inverse();
@@ -254,11 +267,7 @@ pub fn render_d3_animated_pipeline_system(
         usage: wgpu::BufferUsages::STORAGE,
     });
 
-    let transform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("per_frame_animated_transform_buffer"),
-        contents: bytemuck::cast_slice(&all_transforms),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
+    // Note: We no longer need a separate transform buffer since bone matrices include world transform
 
     let indirection_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("per_frame_animated_indirection_buffer"),
@@ -288,10 +297,7 @@ pub fn render_d3_animated_pipeline_system(
                 binding: 1,
                 resource: bone_matrix_buffer.as_entire_binding(),
             },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: transform_buffer.as_entire_binding(),
-            },
+            // Note: Binding 2 (transform_buffer) is no longer used since bone matrices include world transform
         ],
     });
 
@@ -314,7 +320,7 @@ pub fn render_d3_animated_pipeline_system(
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &depth_texture.view,
                 depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
+                    load: wgpu::LoadOp::Clear(1.0),
                     store: wgpu::StoreOp::Store,
                 }),
                 stencil_ops: None,

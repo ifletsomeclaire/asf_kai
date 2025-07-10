@@ -4,8 +4,19 @@ use std::collections::HashMap;
 use types::{AnimatedModel, SkinnedVertex, AABB, Skeleton, Animation};
 use wgpu::util::DeviceExt;
 use bevy_ecs::prelude::Resource;
+use bytemuck::{Pod, Zeroable};
 
-use crate::renderer::assets::static_meshlet::{DrawCommand, MeshletDescription};
+use crate::renderer::assets::static_meshlet::MeshletDescription;
+
+// Define the new, specific struct for animated draws
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+pub struct AnimatedDrawCommand {
+    pub meshlet_id: u32,
+    pub bone_set_id: u32,
+    pub transform_id: u32,
+    pub texture_id: u32,
+}
 
 pub struct ModelMeshlets {
     pub meshlet_indices: Vec<u32>, // Indices into the global meshlets array
@@ -22,7 +33,7 @@ pub struct AnimatedMeshletManager {
     pub meshlet_triangle_indices: Vec<u8>,
     pub meshlets: Vec<MeshletDescription>,
     pub transforms: Vec<Mat4>,
-    pub draw_commands: Vec<DrawCommand>,
+    pub draw_commands: Vec<AnimatedDrawCommand>,
     pub model_meshlets: HashMap<String, Vec<ModelMeshlets>>, // Maps model name to its meshlets
 
     // GPU resources
@@ -50,7 +61,7 @@ impl AnimatedMeshletManager {
         let mut all_meshlet_vertex_indices = Vec::<u32>::new();
         let mut all_meshlet_triangle_indices = Vec::new();
         let mut all_meshlets = Vec::new();
-        let mut draw_commands: Vec<DrawCommand> = Vec::new();
+        let mut draw_commands: Vec<AnimatedDrawCommand> = Vec::new();
         let mut model_meshlets = HashMap::new();
 
         let mut skeletons = HashMap::new();
@@ -130,11 +141,11 @@ impl AnimatedMeshletManager {
                         let meshlet_id = (all_meshlets.len() - 1) as u32;
                         meshlet_indices.push(meshlet_id);
 
-                        let draw_command = DrawCommand {
+                        let draw_command = AnimatedDrawCommand {
                             meshlet_id,
+                            bone_set_id: 0, // Placeholder, will be updated later
                             transform_id: transform_id as u32,
                             texture_id,
-                            _padding: 0,
                         };
                         draw_commands.push(draw_command);
                     }
@@ -156,6 +167,15 @@ impl AnimatedMeshletManager {
             all_vertices.len(),
             all_meshlets.len()
         );
+
+        println!("[AnimatedMeshletManager] Total meshlets created: {}", all_meshlets.len());
+        println!("[AnimatedMeshletManager] Total draw commands: {}", draw_commands.len());
+        if !all_meshlets.is_empty() {
+            println!("[AnimatedMeshletManager] First meshlet: vertex_count={}, triangle_count={}", 
+                all_meshlets[0].vertex_count,
+                all_meshlets[0].triangle_count
+            );
+        }
 
         let vertex_buffer =
             Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

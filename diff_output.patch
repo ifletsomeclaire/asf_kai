@@ -15,260 +15,185 @@ Only in ./assets/models/pillar: base_basic_shaded.glb
 Only in ./assets: models.redb
 Only in .: clean_copy.sh
 Only in .: clean_project
-diff -ru ./clean_project/core/src/app.rs ./core/src/app.rs
---- ./clean_project/core/src/app.rs	2025-07-09 12:24:34
-+++ ./core/src/app.rs	2025-07-09 19:00:24
-@@ -139,22 +139,36 @@
-         ));
- 
-         // Spawn a test animated entity
-+        let model_names = [
-+            "Animation_Running_withSkin",
-+            "Animation_Walking_withSkin", 
-+            "Animation_RunFast_withSkin",
-+            "Animation_Axe_Spin_Attack_withSkin",
-+        ];
-+        
-         let animations = [
-             "Armature|running|baselayer",
--            "Armature|walking|baselayer",
-+            "Armature|walking|baselayer", 
-             "Armature|idle|baselayer",
-             "Armature|jumping|baselayer",
-         ];
- 
--        // Spawn one instance for each animation type
--        for (i, anim_name) in animations.iter().enumerate() {
-+        // Debug: Print available animated models
-+        let asset_server = world.resource::<AssetServer>();
-+        println!("[App] Available animated models:");
-+        for model_name in asset_server.animated_meshlet_manager.model_meshlets.keys() {
-+            println!("  - {}", model_name);
-+        }
-+
-+        // Spawn one instance for each model type
-+        for (i, (model_name, anim_name)) in model_names.iter().zip(animations.iter()).enumerate() {
-              // Create a slight offset for each model so they don't overlap
-             let mut transform = Transform::from_xyz(i as f32 * 2.0, 0.0, 0.0);
-             transform.scale = glam::Vec3::splat(0.01); // Adjust scale if models are too large
- 
-             world.spawn((
-                 AnimatedInstance {
--                    model_name: "Animation_Running_withSkin".to_string(),
-+                    model_name: model_name.to_string(),
-                 },
-                 AnimationPlayer {
-                     animation_name: anim_name.to_string(),
-diff -ru ./clean_project/core/src/ecs/ui.rs ./core/src/ecs/ui.rs
---- ./clean_project/core/src/ecs/ui.rs	2025-07-09 12:41:12
-+++ ./core/src/ecs/ui.rs	2025-07-09 12:41:46
-@@ -138,7 +138,57 @@
+diff -ru ./clean_project/core/src/ecs/animation.rs ./core/src/ecs/animation.rs
+--- ./clean_project/core/src/ecs/animation.rs	2025-07-09 14:05:38
++++ ./core/src/ecs/animation.rs	2025-07-09 22:45:52
+@@ -1,4 +1,5 @@
+ use bevy_ecs::prelude::*;
++use bevy_transform::components::GlobalTransform;
+ use glam::{Mat4, Quat, Vec3};
+ use crate::ecs::time::Time;
+ use crate::renderer::assets::AssetServer;
+@@ -38,9 +39,9 @@
+ pub fn animation_system(
+     time: Res<Time>,
+     asset_server: Res<AssetServer>,
+-    mut query: Query<(&mut AnimationPlayer, &mut BoneMatrices, &AnimatedInstance)>,
++    mut query: Query<(&mut AnimationPlayer, &mut BoneMatrices, &AnimatedInstance, &GlobalTransform)>,
+ ) {
+-    for (mut player, mut bone_matrices, instance) in query.iter_mut() {
++    for (mut player, mut bone_matrices, instance, transform) in query.iter_mut() {
+         if !player.playing {
+             continue;
          }
-     });
+@@ -58,6 +59,7 @@
+             }
+             
+             let animation_time_in_ticks = player.current_time as f64 * animation.ticks_per_second;
++            let model_matrix = transform.compute_matrix(); // Get the entity's world transform matrix
  
--   
-+    egui::Window::new("Spawner").show(ctx, |_ui| {
-+        // --- Mesh Selection ---
-+        // let mesh_names = p.asset_server.get_mesh_names();
-+        // if p.ui_state.spawner_selected_mesh.is_empty() {
-+        //     p.ui_state.spawner_selected_mesh = mesh_names.first().cloned().unwrap_or_default();
-+        // }
-+        // egui::ComboBox::from_label("Mesh")
-+        //     .selected_text(p.ui_state.spawner_selected_mesh.clone())
-+        //     .show_ui(ui, |ui| {
-+        //         for name in mesh_names {
-+        //             ui.selectable_value(&mut p.ui_state.spawner_selected_mesh, name.clone(), name);
-+        //         }
-+        //     });
-+
-+        // --- Texture Selection ---
-+        // let texture_names = p.asset_server.get_texture_names();
-+        // if p.ui_state.spawner_selected_texture.is_empty() {
-+        //     p.ui_state.spawner_selected_texture =
-+        //         texture_names.first().cloned().unwrap_or_default();
-+        // }
-+        // egui::ComboBox::from_label("Texture")
-+        //     .selected_text(p.ui_state.spawner_selected_texture.clone())
-+        //     .show_ui(ui, |ui| {
-+        //         for name in texture_names {
-+        //             ui.selectable_value(
-+        //                 &mut p.ui_state.spawner_selected_texture,
-+        //                 name.clone(),
-+        //                 name,
-+        //             );
-+        //         }
-+        //     });
-+
-+        // ui.separator();
-+
-+        // if ui.button("Spawn").clicked()
-+        //     && !p.ui_state.spawner_selected_mesh.is_empty()
-+        //     && !p.ui_state.spawner_selected_texture.is_empty()
-+        // {
-+        //     p.commands.queue(SpawnInstance {
-+        //         transform: GlobalTransform::default(),
-+        //         mesh_name: p.ui_state.spawner_selected_mesh.clone(),
-+        //         texture_name: p.ui_state.spawner_selected_texture.clone(),
-+        //     });
-+        // }
-+
-+        // if ui.button("Despawn Last").clicked() {
-+        //     if let Some(entity) = p.spawned_entities.0.pop() {
-+        //         p.commands.queue(DespawnInstance { entity });
-+        //     }
-+        // }
-+    });
+             if let Some(skeleton) = &asset_server.animated_meshlet_manager.skeletons.get(&instance.model_name) {
+                 // Calculate local pose for each bone
+@@ -74,10 +76,11 @@
+                     global_poses[i] = parent_pose * local_poses[i];
+                 }
  
-     egui::CentralPanel::default().show(ctx, |ui| {
-         let rect = ui.max_rect();
-diff -ru ./clean_project/core/src/renderer/assets/animated_meshlet.rs ./core/src/renderer/assets/animated_meshlet.rs
---- ./clean_project/core/src/renderer/assets/animated_meshlet.rs	2025-07-09 12:24:51
-+++ ./core/src/renderer/assets/animated_meshlet.rs	2025-07-09 18:54:17
-@@ -157,6 +157,15 @@
-             all_meshlets.len()
-         );
- 
-+        println!("[AnimatedMeshletManager] Total meshlets created: {}", all_meshlets.len());
-+        println!("[AnimatedMeshletManager] Total draw commands: {}", draw_commands.len());
-+        if !all_meshlets.is_empty() {
-+            println!("[AnimatedMeshletManager] First meshlet: vertex_count={}, triangle_count={}", 
-+                all_meshlets[0].vertex_count,
-+                all_meshlets[0].triangle_count
-+            );
-+        }
-+
-         let vertex_buffer =
-             Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                 label: Some("Skinned Vertex Buffer"),
+-                // Calculate final skinning matrices
++                // Calculate final skinning matrices with world transform applied
+                 bone_matrices.matrices.resize(256, Mat4::IDENTITY);
+                 for (i, bone) in skeleton.bones.iter().enumerate() {
+-                    bone_matrices.matrices[i] = global_poses[i] * bone.inverse_bind_pose;
++                    // Pre-multiply by the entity's world transform to get world-space bone matrices
++                    bone_matrices.matrices[i] = model_matrix * global_poses[i] * bone.inverse_bind_pose;
+                 }
+             }
+         }
 diff -ru ./clean_project/core/src/renderer/pipelines/d3_animated_pipeline.rs ./core/src/renderer/pipelines/d3_animated_pipeline.rs
---- ./clean_project/core/src/renderer/pipelines/d3_animated_pipeline.rs	2025-07-09 12:12:26
-+++ ./core/src/renderer/pipelines/d3_animated_pipeline.rs	2025-07-09 18:54:59
-@@ -189,6 +189,9 @@
+--- ./clean_project/core/src/renderer/pipelines/d3_animated_pipeline.rs	2025-07-09 22:51:03
++++ ./core/src/renderer/pipelines/d3_animated_pipeline.rs	2025-07-09 23:05:38
+@@ -67,7 +67,7 @@
+                         count: None,
+                     },
+                     wgpu::BindGroupLayoutEntry {
+-                        binding: 1, // Bone Matrices
++                        binding: 1, // Bone Matrices (now include world transform)
+                         visibility: wgpu::ShaderStages::VERTEX,
+                         ty: wgpu::BindingType::Buffer {
+                             ty: wgpu::BufferBindingType::Storage { read_only: true },
+@@ -76,16 +76,6 @@
+                         },
+                         count: None,
+                     },
+-                    wgpu::BindGroupLayoutEntry {
+-                        binding: 2, // Transform Buffer
+-                        visibility: wgpu::ShaderStages::VERTEX,
+-                        ty: wgpu::BindingType::Buffer {
+-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+-                            has_dynamic_offset: false,
+-                            min_binding_size: None,
+-                        },
+-                        count: None,
+-                    },
+                 ],
+             });
+ 
+@@ -181,18 +171,15 @@
+     // --- 1. Prepare Per-Frame Data (Dynamically) ---
+     let mut draw_commands = Vec::new();
      let mut all_bone_matrices = Vec::new();
-     let mut all_transforms = Vec::new();
+-    let mut all_transforms = Vec::new();
  
-+    // Track bone matrix offsets for each instance
-+    let mut bone_matrix_offsets = Vec::new();
-+    
+     // Track bone matrix offsets for each instance
+     let mut bone_matrix_offsets = Vec::new();
+     
      // Iterate over the entities that are actually in the scene right now.
-     for (instance_index, (instance, bone_matrices, transform)) in
+-    for (instance_index, (instance, bone_matrices, transform)) in
++    for (instance_index, (instance, bone_matrices, _transform)) in
          animated_instance_query.iter().enumerate()
-@@ -197,9 +200,12 @@
-         all_transforms.push(transform.compute_matrix());
-         let transform_id = (all_transforms.len() - 1) as u32;
+     {
+-        // Add the current entity's transform to our list for this frame.
+-        all_transforms.push(transform.compute_matrix());
+-        let transform_id = (all_transforms.len() - 1) as u32;
++        // Note: We no longer need to track transforms separately since bone matrices include world transform
  
--        // Add the current entity's bone matrices.
-+        // Track where this instance's bone matrices start
-+        let bone_matrix_offset = all_bone_matrices.len() as u32;
-+        bone_matrix_offsets.push(bone_matrix_offset);
-+        
-+        // Add this instance's bone matrices
-         all_bone_matrices.extend_from_slice(&bone_matrices.matrices);
--        let bone_set_id = instance_index as u32; // This now correctly corresponds to the block of matrices for this instance.
- 
-         // Find the meshlets associated with this instance's model name.
-         if let Some(model_meshlets_list) = animated_meshlet_manager.model_meshlets.get(&instance.model_name) {
-@@ -208,7 +214,7 @@
+         // Track where this instance's bone matrices start
+         let bone_matrix_offset = all_bone_matrices.len() as u32;
+@@ -211,14 +198,14 @@
+                     meshlet_group_idx, model_meshlets.meshlet_indices.len(), model_meshlets.texture_id);
+                 for (meshlet_idx, &meshlet_id) in model_meshlets.meshlet_indices.iter().enumerate() {
+                     if meshlet_idx < 3 { // Only print first 3 for brevity
+-                        println!("      Meshlet[{}]: id={}, bone_set_id={}, transform_id={}", 
+-                            meshlet_idx, meshlet_id, bone_matrix_offset, transform_id);
++                        println!("      Meshlet[{}]: id={}, bone_set_id={}", 
++                            meshlet_idx, meshlet_id, bone_matrix_offset);
+                     }
                      // Create a new draw command with the correct, frame-specific IDs.
                      draw_commands.push(AnimatedDrawCommand {
                          meshlet_id,
--                        bone_set_id,
-+                        bone_set_id: bone_matrix_offset, // Use actual offset, not instance index
-                         transform_id,
+                         bone_set_id: bone_matrix_offset, // Use actual offset, not instance index
+-                        transform_id,
++                        transform_id: 0, // No longer used since bone matrices include world transform
                          texture_id: model_meshlets.texture_id,
                      });
-@@ -220,6 +226,18 @@
-     if draw_commands.is_empty() {
-         return; // Nothing to draw this frame.
+                 }
+@@ -245,7 +232,6 @@
+         );
      }
-+
-+    println!("[Animated Render] Drawing {} commands", draw_commands.len());
-+    if !draw_commands.is_empty() {
-+        println!("[Animated Render] First draw command: meshlet_id={}, bone_set_id={}, transform_id={}, texture_id={}", 
-+            draw_commands[0].meshlet_id,
-+            draw_commands[0].bone_set_id, 
-+            draw_commands[0].transform_id,
-+            draw_commands[0].texture_id
-+        );
-+    }
-+    println!("[Animated Render] Total bone matrices: {}", all_bone_matrices.len());
-+    println!("[Animated Render] Total transforms: {}", all_transforms.len());
+     println!("[Animated Render] Total bone matrices: {}", all_bone_matrices.len());
+-    println!("[Animated Render] Total transforms: {}", all_transforms.len());
+     
+     println!("\n[Animated Render] Bone matrix layout:");
+     let mut offset = 0;
+@@ -281,11 +267,7 @@
+         usage: wgpu::BufferUsages::STORAGE,
+     });
  
-     // --- 2. Update GPU Buffers ---
-     let view_proj = camera.projection_matrix() * camera_transform.compute_matrix().inverse();
+-    let transform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+-        label: Some("per_frame_animated_transform_buffer"),
+-        contents: bytemuck::cast_slice(&all_transforms),
+-        usage: wgpu::BufferUsages::STORAGE,
+-    });
++    // Note: We no longer need a separate transform buffer since bone matrices include world transform
+ 
+     let indirection_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+         label: Some("per_frame_animated_indirection_buffer"),
+@@ -315,10 +297,7 @@
+                 binding: 1,
+                 resource: bone_matrix_buffer.as_entire_binding(),
+             },
+-            wgpu::BindGroupEntry {
+-                binding: 2,
+-                resource: transform_buffer.as_entire_binding(),
+-            },
++            // Note: Binding 2 (transform_buffer) is no longer used since bone matrices include world transform
+         ],
+     });
+ 
 diff -ru ./clean_project/core/src/shaders/d3_animated.wgsl ./core/src/shaders/d3_animated.wgsl
---- ./clean_project/core/src/shaders/d3_animated.wgsl	2025-07-09 12:36:07
-+++ ./core/src/shaders/d3_animated.wgsl	2025-07-09 18:55:06
-@@ -3,7 +3,7 @@
-     position: vec4<f32>,
-     normal: vec4<f32>,
-     uv: vec2<f32>,
--    //_padding: vec2<f32>, // Padding not needed in shader if memory layout is correct on CPU
-+    _padding: vec2<f32>, // Padding to match Rust struct
-     bone_indices: vec4<u32>,
-     bone_weights: vec4<f32>,
- };
-@@ -86,14 +86,7 @@
-     let vertex = vertices[final_vertex_index];
+--- ./clean_project/core/src/shaders/d3_animated.wgsl	2025-07-09 21:55:06
++++ ./core/src/shaders/d3_animated.wgsl	2025-07-09 22:47:35
+@@ -45,8 +45,7 @@
  
-     // 5. Calculate the skinning transform.
--    var skin_transform = mat4x4<f32>(
--        0.0, 0.0, 0.0, 0.0,
--        0.0, 0.0, 0.0, 0.0,
--        0.0, 0.0, 0.0, 0.0,
--        0.0, 0.0, 0.0, 0.0,
--    );
--    // Use the `bone_set_id` from the command to find the correct block of 256 matrices.
--    let bone_offset = command.bone_set_id * 256u;
-+    var skin_transform: mat4x4<f32>;
-     
-     // Calculate total weight for normalization
-     var total_weight = 0.0;
-@@ -101,15 +94,34 @@
-         total_weight += vertex.bone_weights[i];
-     }
-     
--    // Apply bone transformations with proper weight normalization
--    for (var i = 0; i < 4; i = i + 1) {
--        let bone_index = vertex.bone_indices[i];
--        let bone_weight = vertex.bone_weights[i];
--        if (bone_weight > 0.0 && total_weight > 0.0) {
--            // Normalize the weight and blend the bone matrices
--            let normalized_weight = bone_weight / total_weight;
--            skin_transform += bone_matrices[bone_offset + bone_index] * normalized_weight;
-+    if (total_weight > 0.0) {
-+        skin_transform = mat4x4<f32>(
-+            0.0, 0.0, 0.0, 0.0,
-+            0.0, 0.0, 0.0, 0.0,
-+            0.0, 0.0, 0.0, 0.0,
-+            0.0, 0.0, 0.0, 0.0,
-+        );
-+        // Use the `bone_set_id` from the command as a direct offset into the bone matrices array.
-+        let bone_offset = command.bone_set_id;
-+        
-+        // Apply bone transformations with proper weight normalization
-+        for (var i = 0; i < 4; i = i + 1) {
-+            let bone_index = vertex.bone_indices[i];
-+            let bone_weight = vertex.bone_weights[i];
-+            if (bone_weight > 0.0 && bone_index < 256u) {
-+                // Normalize the weight and blend the bone matrices
-+                let normalized_weight = bone_weight / total_weight;
-+                skin_transform += bone_matrices[bone_offset + bone_index] * normalized_weight;
-+            }
-         }
-+    } else {
-+        // If no weights, use identity matrix
-+        skin_transform = mat4x4<f32>(
-+            1.0, 0.0, 0.0, 0.0,
-+            0.0, 1.0, 0.0, 0.0,
-+            0.0, 0.0, 1.0, 0.0,
-+            0.0, 0.0, 0.0, 1.0,
-+        );
+ // @group(2): Per-Draw Data
+ @group(2) @binding(0) var<storage, read> indirection_buffer: array<AnimatedDrawCommand>;
+-@group(2) @binding(1) var<storage, read> bone_matrices: array<mat4x4<f32>>;
+-@group(2) @binding(2) var<storage, read> transform_buffer: array<mat4x4<f32>>;
++@group(2) @binding(1) var<storage, read> bone_matrices: array<mat4x4<f32>>; // Bone matrices now include world transform
+ 
+ // @group(3): Texture Data (provided by AssetServer)
+ @group(3) @binding(0) var texture_array: texture_2d_array<f32>;
+@@ -125,15 +124,15 @@
      }
  
      // 6. Apply transformations.
+-    let model_transform = transform_buffer[command.transform_id];
++    // The bone matrices now include the world transform, so we don't need to apply model_transform again
+     let skinned_pos = skin_transform * vertex.position;
+-    let world_pos = model_transform * skinned_pos;
++    let world_pos = skinned_pos; // Bone matrices already include world transform
+ 
+     output.clip_position = camera * world_pos;
+     
+     // Safely calculate the world normal
+     let skinned_normal = skin_transform * vec4<f32>(vertex.normal.xyz, 0.0);
+-    let world_normal_unnormalized = (model_transform * skinned_normal).xyz;
++    let world_normal_unnormalized = skinned_normal.xyz; // Bone matrices already include world transform
+ 
+     // Prevent normalization of a zero vector
+     if (length(world_normal_unnormalized) > 0.0001) {
 Only in ./database: models.redb
 Only in .: diff_output.patch
 Only in .: interner
+Only in .: log.log
 Only in .: target
 Only in .: tests
