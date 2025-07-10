@@ -186,7 +186,7 @@ impl Custom3d {
         for (i, (model_name, anim_name)) in model_names.iter().zip(animations.iter()).enumerate() {
              // Create a slight offset for each model so they don't overlap
             let mut transform = Transform::from_xyz(i as f32 * 2.0, 0.0, 0.0);
-            transform.scale = glam::Vec3::splat(0.01); // Adjust scale if models are too large
+            transform.scale = glam::Vec3::splat(1.0); // Changed from 0.01 to isolate scale issue
 
             println!("[App] Spawning instance {}: model='{}', animation='{}', transform={:?}", 
                 i, model_name, anim_name, transform.translation);
