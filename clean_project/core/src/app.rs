@@ -141,16 +141,18 @@ impl Custom3d {
         // Spawn a test animated entity
         let model_names = [
             "Animation_Running_withSkin",
-            "Animation_Walking_withSkin", 
-            "Animation_RunFast_withSkin",
-            "Animation_Axe_Spin_Attack_withSkin",
+            // "Animation_Walking_withSkin", 
+            // "Animation_RunFast_withSkin",
+            // "Animation_Axe_Spin_Attack_withSkin",
         ];
         
+  
+
         let animations = [
             "Armature|running|baselayer",
-            "Armature|walking|baselayer", 
-            "Armature|idle|baselayer",
-            "Armature|jumping|baselayer",
+            // "Armature|walking_man|baselayer", 
+            // "Armature|RunFast|baselayer",
+            // "Armature|Axe_Spin_Attack|baselayer",
         ];
 
         // Debug: Print available animated models
@@ -160,11 +162,34 @@ impl Custom3d {
             println!("  - {}", model_name);
         }
 
+        // Debug: Print available animations
+        println!("[App] Available animations:");
+        for anim_name in asset_server.animated_meshlet_manager.animations.keys() {
+            println!("  - {}", anim_name);
+        }
+
+        // Debug: Print skeleton information
+        println!("[App] Skeleton information:");
+        for (model_name, skeleton) in &asset_server.animated_meshlet_manager.skeletons {
+            println!("  Model '{}': {} bones", model_name, skeleton.bones.len());
+            for (i, bone) in skeleton.bones.iter().take(3).enumerate() {
+                println!("    Bone {}: '{}' (parent: {})", 
+                    i, bone.name, 
+                    bone.parent_index.map(|p| p.to_string()).unwrap_or_else(|| "None".to_string()));
+            }
+            if skeleton.bones.len() > 3 {
+                println!("    ... and {} more bones", skeleton.bones.len() - 3);
+            }
+        }
+
         // Spawn one instance for each model type
         for (i, (model_name, anim_name)) in model_names.iter().zip(animations.iter()).enumerate() {
              // Create a slight offset for each model so they don't overlap
             let mut transform = Transform::from_xyz(i as f32 * 2.0, 0.0, 0.0);
             transform.scale = glam::Vec3::splat(0.01); // Adjust scale if models are too large
+
+            println!("[App] Spawning instance {}: model='{}', animation='{}', transform={:?}", 
+                i, model_name, anim_name, transform.translation);
 
             world.spawn((
                 AnimatedInstance {

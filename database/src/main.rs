@@ -396,6 +396,8 @@ fn process_animated_scene(
     texture_table: &mut redb::Table<&str, &[u8]>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("[DB] Processing ANIMATED model: {model_name}");
+    println!("[DB] -> Scene has {} meshes, {} materials, {} animations", 
+        scene.meshes.len(), scene.materials.len(), scene.animations.len());
 
     // 1. Build skeleton and bone map
     let mut bones = Vec::new();
@@ -431,6 +433,10 @@ fn process_animated_scene(
         ])
         .transpose();
 
+        println!("[DB] -> Bone {}: '{}' (parent: {})", 
+            bone_index, bone_name, 
+            parent_index.map(|p| p.to_string()).unwrap_or_else(|| "None".to_string()));
+
         bones.push(Bone {
             name: bone_name,
             parent_index,
@@ -444,11 +450,16 @@ fn process_animated_scene(
     }
 
     if let Some(root) = &scene.root {
+        println!("[DB] -> Building skeleton from root node: '{}'", root.name);
         build_skeleton_recursive(root, None, &mut bones, &mut bone_map);
     }
 
+    println!("[DB] -> Built skeleton with {} bones", bones.len());
+
     // 1.5. Populate inverse bind poses
-    for mesh in &scene.meshes {
+    println!("[DB] -> Processing inverse bind poses from meshes...");
+    for (mesh_idx, mesh) in scene.meshes.iter().enumerate() {
+        println!("[DB] -> Mesh {}: {} bones", mesh_idx, mesh.bones.len());
         for r_bone in &mesh.bones {
             if let Some(&bone_index) = bone_map.get(&r_bone.name) {
                 let inverse_bind_pose = glam::Mat4::from_cols_array(&[
@@ -471,6 +482,9 @@ fn process_animated_scene(
                 ])
                 .transpose();
                 bones[bone_index].inverse_bind_pose = inverse_bind_pose;
+                println!("[DB] -> Set inverse bind pose for bone '{}' (index {})", r_bone.name, bone_index);
+            } else {
+                println!("[DB] -> WARNING: Bone '{}' from mesh not found in skeleton", r_bone.name);
             }
         }
     }
@@ -478,7 +492,13 @@ fn process_animated_scene(
     let skeleton = Skeleton { bones };
 
     // 2. Process animations
-    for anim in &scene.animations {
+    println!("[DB] -> Processing {} animations...", scene.animations.len());
+    for (anim_idx, anim) in scene.animations.iter().enumerate() {
+        println!("[DB] -> Animation {}: '{}'", anim_idx, anim.name);
+        println!("[DB] ->   Duration: {} ticks", anim.duration);
+        println!("[DB] ->   Ticks per second: {}", anim.ticks_per_second);
+        println!("[DB] ->   Channels: {}", anim.channels.len());
+        
         let mut channels = Vec::new();
         let ticks_per_second = if anim.ticks_per_second > 0.0 {
             anim.ticks_per_second
@@ -486,7 +506,29 @@ fn process_animated_scene(
             25.0 // Default to 25 FPS
         };
 
-        for channel in &anim.channels {
+        for (channel_idx, channel) in anim.channels.iter().enumerate() {
+            println!("[DB] ->   Channel {}: bone='{}'", channel_idx, channel.name);
+            println!("[DB] ->     Position keys: {}", channel.position_keys.len());
+            println!("[DB] ->     Rotation keys: {}", channel.rotation_keys.len());
+            println!("[DB] ->     Scale keys: {}", channel.scaling_keys.len());
+            
+            // Log first and last keyframe values for debugging
+            if !channel.position_keys.is_empty() {
+                let first_pos = &channel.position_keys[0];
+                let last_pos = &channel.position_keys[channel.position_keys.len() - 1];
+                println!("[DB] ->     Position range: [{:.3}, {:.3}, {:.3}] to [{:.3}, {:.3}, {:.3}]", 
+                    first_pos.value.x, first_pos.value.y, first_pos.value.z,
+                    last_pos.value.x, last_pos.value.y, last_pos.value.z);
+            }
+            
+            if !channel.rotation_keys.is_empty() {
+                let first_rot = &channel.rotation_keys[0];
+                let last_rot = &channel.rotation_keys[channel.rotation_keys.len() - 1];
+                println!("[DB] ->     Rotation range: [{:.3}, {:.3}, {:.3}, {:.3}] to [{:.3}, {:.3}, {:.3}, {:.3}]", 
+                    first_rot.value.x, first_rot.value.y, first_rot.value.z, first_rot.value.w,
+                    last_rot.value.x, last_rot.value.y, last_rot.value.z, last_rot.value.w);
+            }
+
             let position_keys = channel
                 .position_keys
                 .iter()
@@ -530,13 +572,20 @@ fn process_animated_scene(
         };
         let encoded_animation = bincode::serialize(&animation)?;
         animation_table.insert(anim.name.as_str(), encoded_animation.as_slice())?;
+        println!("[DB] ->   Saved animation '{}' to database", anim.name);
     }
     
     println!("[DB] -> Found {} animations for {model_name}", scene.animations.len());
 
     // 3. Process meshes
+    println!("[DB] -> Processing {} meshes...", scene.meshes.len());
     let mut animated_meshes = Vec::new();
     for (mesh_index, mesh) in scene.meshes.iter().enumerate() {
+        println!("[DB] -> Mesh {}: '{}'", mesh_index, mesh.name);
+        println!("[DB] ->   Vertices: {}", mesh.vertices.len());
+        println!("[DB] ->   Faces: {}", mesh.faces.len());
+        println!("[DB] ->   Bones: {}", mesh.bones.len());
+        
         let mut vertex_bone_data: Vec<Vec<(u32, f32)>> = vec![Vec::new(); mesh.vertices.len()];
 
         // Create a map from the mesh's local bone index to the skeleton's global bone index.
@@ -549,13 +598,23 @@ fn process_animated_scene(
             })
             .collect();
 
+        println!("[DB] ->   Mapped {} mesh bones to global skeleton", mesh_bone_to_global_bone_map.len());
+
         for (mesh_bone_index, r_bone) in mesh.bones.iter().enumerate() {
             if let Some(&global_bone_index) = mesh_bone_to_global_bone_map.get(&mesh_bone_index) {
+                println!("[DB] ->   Bone '{}': mesh_index={} -> global_index={}", 
+                    r_bone.name, mesh_bone_index, global_bone_index);
                 for weight in &r_bone.weights {
                     vertex_bone_data[weight.vertex_id as usize].push((global_bone_index as u32, weight.weight));
                 }
+            } else {
+                println!("[DB] ->   WARNING: Bone '{}' not found in skeleton", r_bone.name);
             }
         }
+
+        // Log vertex bone data statistics
+        let vertices_with_bones = vertex_bone_data.iter().filter(|v| !v.is_empty()).count();
+        println!("[DB] ->   Vertices with bone influences: {}/{}", vertices_with_bones, mesh.vertices.len());
 
         let vertices: Vec<SkinnedVertex> = mesh
             .vertices
@@ -617,6 +676,8 @@ fn process_animated_scene(
             })
         };
 
+        println!("[DB] ->   Generated {} meshlets", meshlets.as_ref().map_or(0, |m| m.meshlets.len()));
+
         let mut aabb = AABB::default();
         if let Some(first_vtx) = vertices.first() {
             aabb.min = first_vtx.position;
@@ -635,10 +696,10 @@ fn process_animated_scene(
             if let russimp::material::DataContent::Bytes(bytes) = &texture.data {
                 let new_name = format!("{model_name}-mesh-{mesh_index}_diffuse.png");
                 texture_table.insert(new_name.as_str(), bytes.as_slice())?;
-                texture_name = Some(new_name);
+                texture_name = Some(new_name.clone());
+                println!("[DB] ->   Found diffuse texture: {}", new_name);
             }
         }
-
 
         animated_meshes.push(AnimatedMesh {
             name: format!("{model_name}-mesh-{mesh_index}"),
@@ -671,6 +732,9 @@ fn process_animated_scene(
     animated_model_table.insert(model_name, encoded_model.as_slice())?;
 
     println!("[DB] -> Processed {} meshes for {model_name}", mesh_count);
+    println!("[DB] -> Model AABB: min=[{:.3}, {:.3}, {:.3}], max=[{:.3}, {:.3}, {:.3}]", 
+        model_aabb.min.x, model_aabb.min.y, model_aabb.min.z,
+        model_aabb.max.x, model_aabb.max.y, model_aabb.max.z);
     println!("[DB] Successfully processed animated model: {model_name}");
     Ok(())
 }

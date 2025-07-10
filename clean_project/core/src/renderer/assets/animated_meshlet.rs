@@ -77,6 +77,39 @@ impl AnimatedMeshletManager {
             })
             .collect();
 
+        // Log animation details
+        println!("[Asset Loading] Found {} animations in the database:", animations.len());
+        for (anim_name, animation) in &animations {
+            println!("  Animation: '{}'", anim_name);
+            println!("    Duration: {} ticks ({} seconds)", 
+                animation.duration_in_ticks, 
+                animation.duration_in_ticks as f32 / animation.ticks_per_second as f32);
+            println!("    Ticks per second: {}", animation.ticks_per_second);
+            println!("    Channels: {}", animation.channels.len());
+            for (i, channel) in animation.channels.iter().enumerate() {
+                println!("      Channel {}: bone='{}', pos_keys={}, rot_keys={}, scale_keys={}", 
+                    i, channel.bone_name, channel.position_keys.len(), 
+                    channel.rotation_keys.len(), channel.scale_keys.len());
+                
+                // Log keyframe ranges for debugging
+                if !channel.position_keys.is_empty() {
+                    let first_pos = &channel.position_keys[0];
+                    let last_pos = &channel.position_keys[channel.position_keys.len() - 1];
+                    println!("        Position range: [{:.3}, {:.3}, {:.3}] to [{:.3}, {:.3}, {:.3}]", 
+                        first_pos.position.x, first_pos.position.y, first_pos.position.z,
+                        last_pos.position.x, last_pos.position.y, last_pos.position.z);
+                }
+                
+                if !channel.rotation_keys.is_empty() {
+                    let first_rot = &channel.rotation_keys[0];
+                    let last_rot = &channel.rotation_keys[channel.rotation_keys.len() - 1];
+                    println!("        Rotation range: [{:.3}, {:.3}, {:.3}, {:.3}] to [{:.3}, {:.3}, {:.3}, {:.3}]", 
+                        first_rot.rotation.x, first_rot.rotation.y, first_rot.rotation.z, first_rot.rotation.w,
+                        last_rot.rotation.x, last_rot.rotation.y, last_rot.rotation.z, last_rot.rotation.w);
+                }
+            }
+        }
+
         let models: Vec<AnimatedModel> = model_table
             .iter()
             .unwrap()
@@ -94,11 +127,48 @@ impl AnimatedMeshletManager {
 
         for (transform_id, model) in models.iter().enumerate() {
             println!("[Asset Loading] Loading animated model: '{}'", model.name);
+            println!("  Skeleton: {} bones", model.skeleton.bones.len());
+            for (i, bone) in model.skeleton.bones.iter().enumerate() {
+                println!("    Bone {}: '{}' (parent: {})", 
+                    i, bone.name, 
+                    bone.parent_index.map(|p| p.to_string()).unwrap_or_else(|| "None".to_string()));
+                
+                // Log bone transform details for first few bones
+                if i < 3 {
+                    let bone_pos = bone.transform.transform_point3(glam::Vec3::ZERO);
+                    let inv_pos = bone.inverse_bind_pose.transform_point3(glam::Vec3::ZERO);
+                    println!("      Transform: pos=[{:.3}, {:.3}, {:.3}], inv_pos=[{:.3}, {:.3}, {:.3}]", 
+                        bone_pos.x, bone_pos.y, bone_pos.z, inv_pos.x, inv_pos.y, inv_pos.z);
+                }
+            }
             skeletons.insert(model.name.clone(), model.skeleton.clone());
             
             let mut model_meshlets_list = Vec::new();
 
-            for mesh in &model.meshes {
+            println!("  Processing {} meshes...", model.meshes.len());
+            for (mesh_idx, mesh) in model.meshes.iter().enumerate() {
+                println!("    Mesh {}: '{}'", mesh_idx, mesh.name);
+                println!("      Vertices: {}", mesh.vertices.len());
+                println!("      Indices: {}", mesh.indices.len());
+                println!("      Texture: {:?}", mesh.texture_name);
+                
+                // Log vertex bone data statistics
+                let vertices_with_bones = mesh.vertices.iter()
+                    .filter(|v| v.bone_indices.iter().any(|&idx| idx != 0))
+                    .count();
+                println!("      Vertices with bone influences: {}/{}", vertices_with_bones, mesh.vertices.len());
+                
+                // Log bone weight distribution
+                let mut bone_usage = std::collections::HashMap::new();
+                for vertex in &mesh.vertices {
+                    for (i, &bone_idx) in vertex.bone_indices.iter().enumerate() {
+                        if bone_idx != 0 && vertex.bone_weights[i] > 0.0 {
+                            *bone_usage.entry(bone_idx).or_insert(0) += 1;
+                        }
+                    }
+                }
+                println!("      Bone usage: {} unique bones used", bone_usage.len());
+                
                 if let Some(mesh_meshlets) = &mesh.meshlets {
                     let vertex_base = all_vertices.len() as u32;
                     let meshlet_vertex_index_base = all_meshlet_vertex_indices.len() as u32;
@@ -121,15 +191,15 @@ impl AnimatedMeshletManager {
                         .unwrap_or(0);
 
                     println!(
-                        "  -> Mesh '{}' has {} vertices and {} meshlets.",
-                        mesh.name,
-                        mesh.vertices.len(),
-                        mesh.meshlets.as_ref().map_or(0, |m| m.meshlets.len())
+                        "      Generated {} meshlets (vertex_base={}, triangle_base={})",
+                        mesh_meshlets.meshlets.len(),
+                        vertex_base,
+                        triangle_base
                     );
 
                     let mut meshlet_indices = Vec::new();
 
-                    for m in &mesh_meshlets.meshlets {
+                    for (meshlet_idx, m) in mesh_meshlets.meshlets.iter().enumerate() {
                         let desc = MeshletDescription {
                             vertex_list_offset: meshlet_vertex_index_base + m.vertex_offset,
                             triangle_list_offset: triangle_base + m.triangle_offset,
@@ -140,6 +210,12 @@ impl AnimatedMeshletManager {
 
                         let meshlet_id = (all_meshlets.len() - 1) as u32;
                         meshlet_indices.push(meshlet_id);
+
+                        // Log first few meshlets for debugging
+                        if meshlet_idx < 3 {
+                            println!("        Meshlet {}: id={}, vertices={}, triangles={}", 
+                                meshlet_idx, meshlet_id, m.vertex_count, m.triangle_count);
+                        }
 
                         let draw_command = AnimatedDrawCommand {
                             meshlet_id,
@@ -155,6 +231,8 @@ impl AnimatedMeshletManager {
                         texture_id,
                     });
 
+                } else {
+                    println!("      WARNING: No meshlets generated for this mesh");
                 }
             }
 

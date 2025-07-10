@@ -85,7 +85,12 @@ fn vs_main(
     let vertex = vertices[final_vertex_index];
 
     // 5. Calculate the skinning transform.
-    var skin_transform: mat4x4<f32>;
+    var skin_transform: mat4x4<f32> = mat4x4<f32>(
+        0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0,
+    );
     
     // Calculate total weight for normalization
     var total_weight = 0.0;
@@ -93,24 +98,21 @@ fn vs_main(
         total_weight += vertex.bone_weights[i];
     }
     
-    if (total_weight > 0.0) {
-        skin_transform = mat4x4<f32>(
-            0.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 0.0,
-        );
-        // Use the `bone_set_id` from the command as a direct offset into the bone matrices array.
-        let bone_offset = command.bone_set_id;
+    // Only apply skinning if we have valid weights
+    if (total_weight > 0.001) {
+        // Use the bone_set_id as a block offset into the bone matrices array
+        // Each instance has 256 bone matrices, so multiply by 256 to get the start of this instance's bone matrices
+        let bone_matrix_offset = command.bone_set_id * 256u;
         
         // Apply bone transformations with proper weight normalization
         for (var i = 0; i < 4; i = i + 1) {
             let bone_index = vertex.bone_indices[i];
             let bone_weight = vertex.bone_weights[i];
-            if (bone_weight > 0.0 && bone_index < 256u) {
+            if (bone_weight > 0.001 && bone_index < 256u) {
                 // Normalize the weight and blend the bone matrices
                 let normalized_weight = bone_weight / total_weight;
-                skin_transform += bone_matrices[bone_offset + bone_index] * normalized_weight;
+                let bone_matrix_index = bone_matrix_offset + bone_index;
+                skin_transform += bone_matrices[bone_matrix_index] * normalized_weight;
             }
         }
     } else {
@@ -124,15 +126,15 @@ fn vs_main(
     }
 
     // 6. Apply transformations.
-    // The bone matrices now include the world transform, so we don't need to apply model_transform again
+    // The bone matrices already include the world transform, so we apply them directly to the vertex
     let skinned_pos = skin_transform * vertex.position;
     let world_pos = skinned_pos; // Bone matrices already include world transform
 
     output.clip_position = camera * world_pos;
     
-    // Safely calculate the world normal
+    // Calculate the world normal using the same skinning transform
     let skinned_normal = skin_transform * vec4<f32>(vertex.normal.xyz, 0.0);
-    let world_normal_unnormalized = skinned_normal.xyz; // Bone matrices already include world transform
+    let world_normal_unnormalized = skinned_normal.xyz;
 
     // Prevent normalization of a zero vector
     if (length(world_normal_unnormalized) > 0.0001) {

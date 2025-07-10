@@ -45,9 +45,11 @@ pub fn animation_system(
         if !player.playing {
             continue;
         }
+        println!("[Animation] Processing: {} transform: {:?}", player.animation_name, transform.translation());
 
         if let Some(animation) = asset_server.animated_meshlet_manager.animations.get(&player.animation_name) {
             // Update time
+            let old_time = player.current_time;
             player.current_time += time.delta_seconds() * player.speed;
             let duration_in_seconds = animation.duration_in_ticks as f32 / animation.ticks_per_second as f32;
 
@@ -61,7 +63,13 @@ pub fn animation_system(
             let animation_time_in_ticks = player.current_time as f64 * animation.ticks_per_second;
             let model_matrix = transform.compute_matrix(); // Get the entity's world transform matrix
 
+            println!("[Animation] -> Time: {:.3}s -> {:.3}s (duration: {:.3}s)", 
+                old_time, player.current_time, duration_in_seconds);
+            println!("[Animation] -> Animation time in ticks: {:.3}", animation_time_in_ticks);
+
             if let Some(skeleton) = &asset_server.animated_meshlet_manager.skeletons.get(&instance.model_name) {
+                println!("[Animation] -> Skeleton has {} bones", skeleton.bones.len());
+                
                 // Calculate local pose for each bone
                 let local_poses: Vec<Mat4> = skeleton.bones.iter().map(|bone| {
                     calculate_bone_transform(animation, &bone.name, animation_time_in_ticks, bone.transform)
@@ -74,15 +82,38 @@ pub fn animation_system(
                         .map(|idx| global_poses[idx])
                         .unwrap_or(Mat4::IDENTITY);
                     global_poses[i] = parent_pose * local_poses[i];
+                    
+                    // Log bone transformation details for first few bones
+                    if i < 3 {
+                        let local_pos = local_poses[i].transform_point3(glam::Vec3::ZERO);
+                        let global_pos = global_poses[i].transform_point3(glam::Vec3::ZERO);
+                        println!("[Animation] -> Bone {} '{}': local_pos=[{:.3}, {:.3}, {:.3}], global_pos=[{:.3}, {:.3}, {:.3}]", 
+                            i, bone.name, local_pos.x, local_pos.y, local_pos.z, global_pos.x, global_pos.y, global_pos.z);
+                    }
                 }
 
                 // Calculate final skinning matrices with world transform applied
                 bone_matrices.matrices.resize(256, Mat4::IDENTITY);
                 for (i, bone) in skeleton.bones.iter().enumerate() {
-                    // Pre-multiply by the entity's world transform to get world-space bone matrices
+                    // The correct order for skinning matrices is:
+                    // world_transform * global_pose * inverse_bind_pose
+                    // This gives us the final bone matrix that transforms from bind pose to world space
                     bone_matrices.matrices[i] = model_matrix * global_poses[i] * bone.inverse_bind_pose;
+                    
+                    // Log final bone matrix details for first few bones
+                    if i < 3 {
+                        let final_pos = bone_matrices.matrices[i].transform_point3(glam::Vec3::ZERO);
+                        println!("[Animation] -> Final bone {} '{}': world_pos=[{:.3}, {:.3}, {:.3}]", 
+                            i, bone.name, final_pos.x, final_pos.y, final_pos.z);
+                    }
                 }
+                
+                println!("[Animation] -> Updated {} bone matrices", skeleton.bones.len());
+            } else {
+                println!("[Animation] -> WARNING: No skeleton found for model '{}'", instance.model_name);
             }
+        } else {
+            println!("[Animation] -> WARNING: No animation found for '{}'", player.animation_name);
         }
     }
 }
@@ -95,9 +126,22 @@ fn calculate_bone_transform(animation: &Animation, bone_name: &str, time_in_tick
         let rotation = find_interpolated_rotation(time_in_ticks, &channel.rotation_keys).unwrap_or(Quat::IDENTITY);
         let scale = find_interpolated_scale(time_in_ticks, &channel.scale_keys).unwrap_or(Vec3::ONE);
 
-        Mat4::from_scale_rotation_translation(scale, rotation, position)
+        let transform = Mat4::from_scale_rotation_translation(scale, rotation, position);
+        
+        // Log interpolation details for debugging
+        if bone_name.contains("Armature") || bone_name.contains("Bone") {
+            println!("[Interpolation] Bone '{}': pos=[{:.3}, {:.3}, {:.3}], rot=[{:.3}, {:.3}, {:.3}, {:.3}], scale=[{:.3}, {:.3}, {:.3}]", 
+                bone_name, position.x, position.y, position.z,
+                rotation.x, rotation.y, rotation.z, rotation.w,
+                scale.x, scale.y, scale.z);
+        }
+        
+        transform
     } else {
         // If no animation channel affects this bone, return the bone's bind pose transform
+        if bone_name.contains("Armature") || bone_name.contains("Bone") {
+            println!("[Interpolation] Bone '{}': using default transform (no animation channel)", bone_name);
+        }
         default_transform
     }
 }
@@ -129,7 +173,18 @@ fn find_interpolated_position(time_in_ticks: f64, keys: &[PositionKey]) -> Optio
         0.0
     };
 
-    Some(prev_key.position.lerp(next_key.position, interpolation_factor as f32))
+    let result = prev_key.position.lerp(next_key.position, interpolation_factor as f32);
+    
+    // Log interpolation details for debugging
+    if keys.len() > 1 && (prev_key.position - next_key.position).length() > 0.1 {
+        println!("[Interpolation] Position: t={:.3}, factor={:.3}, prev=[{:.3}, {:.3}, {:.3}], next=[{:.3}, {:.3}, {:.3}], result=[{:.3}, {:.3}, {:.3}]", 
+            time_in_ticks, interpolation_factor,
+            prev_key.position.x, prev_key.position.y, prev_key.position.z,
+            next_key.position.x, next_key.position.y, next_key.position.z,
+            result.x, result.y, result.z);
+    }
+
+    Some(result)
 }
 
 fn find_interpolated_rotation(time_in_ticks: f64, keys: &[RotationKey]) -> Option<Quat> {
@@ -158,7 +213,18 @@ fn find_interpolated_rotation(time_in_ticks: f64, keys: &[RotationKey]) -> Optio
         0.0
     };
 
-    Some(prev_key.rotation.slerp(next_key.rotation, interpolation_factor as f32))
+    let result = prev_key.rotation.slerp(next_key.rotation, interpolation_factor as f32);
+    
+    // Log interpolation details for debugging
+    if keys.len() > 1 && (prev_key.rotation.xyz() - next_key.rotation.xyz()).length() > 0.1 {
+        println!("[Interpolation] Rotation: t={:.3}, factor={:.3}, prev=[{:.3}, {:.3}, {:.3}, {:.3}], next=[{:.3}, {:.3}, {:.3}, {:.3}], result=[{:.3}, {:.3}, {:.3}, {:.3}]", 
+            time_in_ticks, interpolation_factor,
+            prev_key.rotation.x, prev_key.rotation.y, prev_key.rotation.z, prev_key.rotation.w,
+            next_key.rotation.x, next_key.rotation.y, next_key.rotation.z, next_key.rotation.w,
+            result.x, result.y, result.z, result.w);
+    }
+
+    Some(result)
 }
 
 fn find_interpolated_scale(time_in_ticks: f64, keys: &[ScaleKey]) -> Option<Vec3> {
@@ -187,5 +253,16 @@ fn find_interpolated_scale(time_in_ticks: f64, keys: &[ScaleKey]) -> Option<Vec3
         0.0
     };
 
-    Some(prev_key.scale.lerp(next_key.scale, interpolation_factor as f32))
+    let result = prev_key.scale.lerp(next_key.scale, interpolation_factor as f32);
+    
+    // Log interpolation details for debugging
+    if keys.len() > 1 && (prev_key.scale - next_key.scale).length() > 0.1 {
+        println!("[Interpolation] Scale: t={:.3}, factor={:.3}, prev=[{:.3}, {:.3}, {:.3}], next=[{:.3}, {:.3}, {:.3}], result=[{:.3}, {:.3}, {:.3}]", 
+            time_in_ticks, interpolation_factor,
+            prev_key.scale.x, prev_key.scale.y, prev_key.scale.z,
+            next_key.scale.x, next_key.scale.y, next_key.scale.z,
+            result.x, result.y, result.z);
+    }
+
+    Some(result)
 }

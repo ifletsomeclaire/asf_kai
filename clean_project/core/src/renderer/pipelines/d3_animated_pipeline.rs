@@ -183,8 +183,18 @@ pub fn render_d3_animated_pipeline_system(
 
         // Track where this instance's bone matrices start
         let bone_matrix_offset = all_bone_matrices.len() as u32;
-        println!("  Instance[{}] '{}': bone_matrix_offset = {} (adding {} matrices)", 
+        println!("[Animated Render] Instance[{}] '{}': bone_matrix_offset = {} (adding {} matrices)", 
             instance_index, instance.model_name, bone_matrix_offset, bone_matrices.matrices.len());
+        
+        // Log bone matrix details for first few bones
+        if instance_index < 2 {
+            for (i, matrix) in bone_matrices.matrices.iter().take(3).enumerate() {
+                let pos = matrix.transform_point3(glam::Vec3::ZERO);
+                println!("[Animated Render]   Bone {} matrix: pos=[{:.3}, {:.3}, {:.3}]", 
+                    i, pos.x, pos.y, pos.z);
+            }
+        }
+        
         bone_matrix_offsets.push(bone_matrix_offset);
         
         // Add this instance's bone matrices
@@ -192,29 +202,29 @@ pub fn render_d3_animated_pipeline_system(
 
         // Find the meshlets associated with this instance's model name.
         if let Some(model_meshlets_list) = animated_meshlet_manager.model_meshlets.get(&instance.model_name) {
-            println!("  Creating draw commands for model '{}' (instance {}):", instance.model_name, instance_index);
+            println!("[Animated Render] Creating draw commands for model '{}' (instance {}):", instance.model_name, instance_index);
             for (meshlet_group_idx, model_meshlets) in model_meshlets_list.iter().enumerate() {
-                println!("    Meshlet group {}: {} meshlets, texture_id={}", 
+                println!("[Animated Render]   Meshlet group {}: {} meshlets, texture_id={}", 
                     meshlet_group_idx, model_meshlets.meshlet_indices.len(), model_meshlets.texture_id);
                 for (meshlet_idx, &meshlet_id) in model_meshlets.meshlet_indices.iter().enumerate() {
                     if meshlet_idx < 3 { // Only print first 3 for brevity
-                        println!("      Meshlet[{}]: id={}, bone_set_id={}", 
-                            meshlet_idx, meshlet_id, bone_matrix_offset);
+                        println!("[Animated Render]     Meshlet[{}]: id={}, bone_set_id={}", 
+                            meshlet_idx, meshlet_id, instance_index);
                     }
                     // Create a new draw command with the correct, frame-specific IDs.
                     draw_commands.push(AnimatedDrawCommand {
                         meshlet_id,
-                        bone_set_id: bone_matrix_offset, // Use actual offset, not instance index
+                        bone_set_id: instance_index as u32, // Use instance index as bone_set_id for proper indexing
                         transform_id: 0, // No longer used since bone matrices include world transform
                         texture_id: model_meshlets.texture_id,
                     });
                 }
                 if model_meshlets.meshlet_indices.len() > 3 {
-                    println!("      ... and {} more meshlets", model_meshlets.meshlet_indices.len() - 3);
+                    println!("[Animated Render]     ... and {} more meshlets", model_meshlets.meshlet_indices.len() - 3);
                 }
             }
         } else {
-            println!("  WARNING: No meshlets found for model '{}'", instance.model_name);
+            println!("[Animated Render] WARNING: No meshlets found for model '{}'", instance.model_name);
         }
     }
 
@@ -233,24 +243,31 @@ pub fn render_d3_animated_pipeline_system(
     }
     println!("[Animated Render] Total bone matrices: {}", all_bone_matrices.len());
     
-    println!("\n[Animated Render] Bone matrix layout:");
+    println!("[Animated Render] Bone matrix layout:");
     let mut offset = 0;
     for (i, (instance, bone_matrices, _)) in animated_instance_query.iter().enumerate() {
-        println!("  Instance[{}] '{}': offset={}, count={}", 
+        println!("[Animated Render]   Instance[{}] '{}': offset={}, count={}", 
             i, instance.model_name, offset, bone_matrices.matrices.len());
         offset += bone_matrices.matrices.len();
     }
     
-    println!("\n[Animated Render] Draw command summary:");
-    println!("  Total draw commands: {}", draw_commands.len());
+    println!("[Animated Render] Draw command summary:");
+    println!("[Animated Render]   Total draw commands: {}", draw_commands.len());
     if !draw_commands.is_empty() {
-        println!("  First draw command: meshlet_id={}, bone_set_id={}, transform_id={}, texture_id={}", 
+        println!("[Animated Render]   First draw command: meshlet_id={}, bone_set_id={}, transform_id={}, texture_id={}", 
             draw_commands[0].meshlet_id, draw_commands[0].bone_set_id, 
             draw_commands[0].transform_id, draw_commands[0].texture_id);
-        println!("  Last draw command: meshlet_id={}, bone_set_id={}, transform_id={}, texture_id={}", 
+        println!("[Animated Render]   Last draw command: meshlet_id={}, bone_set_id={}, transform_id={}, texture_id={}", 
             draw_commands[draw_commands.len()-1].meshlet_id, draw_commands[draw_commands.len()-1].bone_set_id, 
             draw_commands[draw_commands.len()-1].transform_id, draw_commands[draw_commands.len()-1].texture_id);
     }
+    
+    // Log GPU buffer creation details
+    println!("[Animated Render] Creating GPU buffers:");
+    println!("[Animated Render]   Bone matrix buffer: {} matrices, {} bytes", 
+        all_bone_matrices.len(), all_bone_matrices.len() * std::mem::size_of::<Mat4>());
+    println!("[Animated Render]   Indirection buffer: {} commands, {} bytes", 
+        draw_commands.len(), draw_commands.len() * std::mem::size_of::<AnimatedDrawCommand>());
 
     // --- 2. Update GPU Buffers ---
     let view_proj = camera.projection_matrix() * camera_transform.compute_matrix().inverse();
