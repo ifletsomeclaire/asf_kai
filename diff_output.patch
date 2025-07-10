@@ -15,6 +15,50 @@ Only in ./assets/models/pillar: base_basic_shaded.glb
 Only in ./assets: models.redb
 Only in .: clean_copy.sh
 Only in .: clean_project
+diff -ru ./clean_project/core/src/app.rs ./core/src/app.rs
+--- ./clean_project/core/src/app.rs	2025-07-09 12:24:34
++++ ./core/src/app.rs	2025-07-09 19:00:24
+@@ -139,22 +139,36 @@
+         ));
+ 
+         // Spawn a test animated entity
++        let model_names = [
++            "Animation_Running_withSkin",
++            "Animation_Walking_withSkin", 
++            "Animation_RunFast_withSkin",
++            "Animation_Axe_Spin_Attack_withSkin",
++        ];
++        
+         let animations = [
+             "Armature|running|baselayer",
+-            "Armature|walking|baselayer",
++            "Armature|walking|baselayer", 
+             "Armature|idle|baselayer",
+             "Armature|jumping|baselayer",
+         ];
+ 
+-        // Spawn one instance for each animation type
+-        for (i, anim_name) in animations.iter().enumerate() {
++        // Debug: Print available animated models
++        let asset_server = world.resource::<AssetServer>();
++        println!("[App] Available animated models:");
++        for model_name in asset_server.animated_meshlet_manager.model_meshlets.keys() {
++            println!("  - {}", model_name);
++        }
++
++        // Spawn one instance for each model type
++        for (i, (model_name, anim_name)) in model_names.iter().zip(animations.iter()).enumerate() {
+              // Create a slight offset for each model so they don't overlap
+             let mut transform = Transform::from_xyz(i as f32 * 2.0, 0.0, 0.0);
+             transform.scale = glam::Vec3::splat(0.01); // Adjust scale if models are too large
+ 
+             world.spawn((
+                 AnimatedInstance {
+-                    model_name: "Animation_Running_withSkin".to_string(),
++                    model_name: model_name.to_string(),
+                 },
+                 AnimationPlayer {
+                     animation_name: anim_name.to_string(),
 diff -ru ./clean_project/core/src/ecs/ui.rs ./core/src/ecs/ui.rs
 --- ./clean_project/core/src/ecs/ui.rs	2025-07-09 12:41:12
 +++ ./core/src/ecs/ui.rs	2025-07-09 12:41:46
@@ -77,9 +121,93 @@ diff -ru ./clean_project/core/src/ecs/ui.rs ./core/src/ecs/ui.rs
  
      egui::CentralPanel::default().show(ctx, |ui| {
          let rect = ui.max_rect();
+diff -ru ./clean_project/core/src/renderer/assets/animated_meshlet.rs ./core/src/renderer/assets/animated_meshlet.rs
+--- ./clean_project/core/src/renderer/assets/animated_meshlet.rs	2025-07-09 12:24:51
++++ ./core/src/renderer/assets/animated_meshlet.rs	2025-07-09 18:54:17
+@@ -157,6 +157,15 @@
+             all_meshlets.len()
+         );
+ 
++        println!("[AnimatedMeshletManager] Total meshlets created: {}", all_meshlets.len());
++        println!("[AnimatedMeshletManager] Total draw commands: {}", draw_commands.len());
++        if !all_meshlets.is_empty() {
++            println!("[AnimatedMeshletManager] First meshlet: vertex_count={}, triangle_count={}", 
++                all_meshlets[0].vertex_count,
++                all_meshlets[0].triangle_count
++            );
++        }
++
+         let vertex_buffer =
+             Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                 label: Some("Skinned Vertex Buffer"),
+diff -ru ./clean_project/core/src/renderer/pipelines/d3_animated_pipeline.rs ./core/src/renderer/pipelines/d3_animated_pipeline.rs
+--- ./clean_project/core/src/renderer/pipelines/d3_animated_pipeline.rs	2025-07-09 12:12:26
++++ ./core/src/renderer/pipelines/d3_animated_pipeline.rs	2025-07-09 18:54:59
+@@ -189,6 +189,9 @@
+     let mut all_bone_matrices = Vec::new();
+     let mut all_transforms = Vec::new();
+ 
++    // Track bone matrix offsets for each instance
++    let mut bone_matrix_offsets = Vec::new();
++    
+     // Iterate over the entities that are actually in the scene right now.
+     for (instance_index, (instance, bone_matrices, transform)) in
+         animated_instance_query.iter().enumerate()
+@@ -197,9 +200,12 @@
+         all_transforms.push(transform.compute_matrix());
+         let transform_id = (all_transforms.len() - 1) as u32;
+ 
+-        // Add the current entity's bone matrices.
++        // Track where this instance's bone matrices start
++        let bone_matrix_offset = all_bone_matrices.len() as u32;
++        bone_matrix_offsets.push(bone_matrix_offset);
++        
++        // Add this instance's bone matrices
+         all_bone_matrices.extend_from_slice(&bone_matrices.matrices);
+-        let bone_set_id = instance_index as u32; // This now correctly corresponds to the block of matrices for this instance.
+ 
+         // Find the meshlets associated with this instance's model name.
+         if let Some(model_meshlets_list) = animated_meshlet_manager.model_meshlets.get(&instance.model_name) {
+@@ -208,7 +214,7 @@
+                     // Create a new draw command with the correct, frame-specific IDs.
+                     draw_commands.push(AnimatedDrawCommand {
+                         meshlet_id,
+-                        bone_set_id,
++                        bone_set_id: bone_matrix_offset, // Use actual offset, not instance index
+                         transform_id,
+                         texture_id: model_meshlets.texture_id,
+                     });
+@@ -220,6 +226,18 @@
+     if draw_commands.is_empty() {
+         return; // Nothing to draw this frame.
+     }
++
++    println!("[Animated Render] Drawing {} commands", draw_commands.len());
++    if !draw_commands.is_empty() {
++        println!("[Animated Render] First draw command: meshlet_id={}, bone_set_id={}, transform_id={}, texture_id={}", 
++            draw_commands[0].meshlet_id,
++            draw_commands[0].bone_set_id, 
++            draw_commands[0].transform_id,
++            draw_commands[0].texture_id
++        );
++    }
++    println!("[Animated Render] Total bone matrices: {}", all_bone_matrices.len());
++    println!("[Animated Render] Total transforms: {}", all_transforms.len());
+ 
+     // --- 2. Update GPU Buffers ---
+     let view_proj = camera.projection_matrix() * camera_transform.compute_matrix().inverse();
 diff -ru ./clean_project/core/src/shaders/d3_animated.wgsl ./core/src/shaders/d3_animated.wgsl
 --- ./clean_project/core/src/shaders/d3_animated.wgsl	2025-07-09 12:36:07
-+++ ./core/src/shaders/d3_animated.wgsl	2025-07-09 12:40:09
++++ ./core/src/shaders/d3_animated.wgsl	2025-07-09 18:55:06
+@@ -3,7 +3,7 @@
+     position: vec4<f32>,
+     normal: vec4<f32>,
+     uv: vec2<f32>,
+-    //_padding: vec2<f32>, // Padding not needed in shader if memory layout is correct on CPU
++    _padding: vec2<f32>, // Padding to match Rust struct
+     bone_indices: vec4<u32>,
+     bone_weights: vec4<f32>,
+ };
 @@ -86,14 +86,7 @@
      let vertex = vertices[final_vertex_index];
  
@@ -115,14 +243,14 @@ diff -ru ./clean_project/core/src/shaders/d3_animated.wgsl ./core/src/shaders/d3
 +            0.0, 0.0, 0.0, 0.0,
 +            0.0, 0.0, 0.0, 0.0,
 +        );
-+        // Use the `bone_set_id` from the command to find the correct block of 256 matrices.
-+        let bone_offset = command.bone_set_id * 256u;
++        // Use the `bone_set_id` from the command as a direct offset into the bone matrices array.
++        let bone_offset = command.bone_set_id;
 +        
 +        // Apply bone transformations with proper weight normalization
 +        for (var i = 0; i < 4; i = i + 1) {
 +            let bone_index = vertex.bone_indices[i];
 +            let bone_weight = vertex.bone_weights[i];
-+            if (bone_weight > 0.0) {
++            if (bone_weight > 0.0 && bone_index < 256u) {
 +                // Normalize the weight and blend the bone matrices
 +                let normalized_weight = bone_weight / total_weight;
 +                skin_transform += bone_matrices[bone_offset + bone_index] * normalized_weight;

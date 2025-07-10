@@ -157,6 +157,15 @@ impl AnimatedMeshletManager {
             all_meshlets.len()
         );
 
+        println!("[AnimatedMeshletManager] Total meshlets created: {}", all_meshlets.len());
+        println!("[AnimatedMeshletManager] Total draw commands: {}", draw_commands.len());
+        if !all_meshlets.is_empty() {
+            println!("[AnimatedMeshletManager] First meshlet: vertex_count={}, triangle_count={}", 
+                all_meshlets[0].vertex_count,
+                all_meshlets[0].triangle_count
+            );
+        }
+
         let vertex_buffer =
             Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Skinned Vertex Buffer"),

@@ -189,6 +189,9 @@ pub fn render_d3_animated_pipeline_system(
     let mut all_bone_matrices = Vec::new();
     let mut all_transforms = Vec::new();
 
+    // Track bone matrix offsets for each instance
+    let mut bone_matrix_offsets = Vec::new();
+    
     // Iterate over the entities that are actually in the scene right now.
     for (instance_index, (instance, bone_matrices, transform)) in
         animated_instance_query.iter().enumerate()
@@ -197,9 +200,12 @@ pub fn render_d3_animated_pipeline_system(
         all_transforms.push(transform.compute_matrix());
         let transform_id = (all_transforms.len() - 1) as u32;
 
-        // Add the current entity's bone matrices.
+        // Track where this instance's bone matrices start
+        let bone_matrix_offset = all_bone_matrices.len() as u32;
+        bone_matrix_offsets.push(bone_matrix_offset);
+        
+        // Add this instance's bone matrices
         all_bone_matrices.extend_from_slice(&bone_matrices.matrices);
-        let bone_set_id = instance_index as u32; // This now correctly corresponds to the block of matrices for this instance.
 
         // Find the meshlets associated with this instance's model name.
         if let Some(model_meshlets_list) = animated_meshlet_manager.model_meshlets.get(&instance.model_name) {
@@ -208,7 +214,7 @@ pub fn render_d3_animated_pipeline_system(
                     // Create a new draw command with the correct, frame-specific IDs.
                     draw_commands.push(AnimatedDrawCommand {
                         meshlet_id,
-                        bone_set_id,
+                        bone_set_id: bone_matrix_offset, // Use actual offset, not instance index
                         transform_id,
                         texture_id: model_meshlets.texture_id,
                     });
@@ -220,6 +226,18 @@ pub fn render_d3_animated_pipeline_system(
     if draw_commands.is_empty() {
         return; // Nothing to draw this frame.
     }
+
+    println!("[Animated Render] Drawing {} commands", draw_commands.len());
+    if !draw_commands.is_empty() {
+        println!("[Animated Render] First draw command: meshlet_id={}, bone_set_id={}, transform_id={}, texture_id={}", 
+            draw_commands[0].meshlet_id,
+            draw_commands[0].bone_set_id, 
+            draw_commands[0].transform_id,
+            draw_commands[0].texture_id
+        );
+    }
+    println!("[Animated Render] Total bone matrices: {}", all_bone_matrices.len());
+    println!("[Animated Render] Total transforms: {}", all_transforms.len());
 
     // --- 2. Update GPU Buffers ---
     let view_proj = camera.projection_matrix() * camera_transform.compute_matrix().inverse();

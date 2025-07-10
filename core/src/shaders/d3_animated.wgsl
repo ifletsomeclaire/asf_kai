@@ -3,7 +3,7 @@ struct SkinnedVertex {
     position: vec4<f32>,
     normal: vec4<f32>,
     uv: vec2<f32>,
-    //_padding: vec2<f32>, // Padding not needed in shader if memory layout is correct on CPU
+    _padding: vec2<f32>, // Padding to match Rust struct
     bone_indices: vec4<u32>,
     bone_weights: vec4<f32>,
 };
@@ -101,14 +101,14 @@ fn vs_main(
             0.0, 0.0, 0.0, 0.0,
             0.0, 0.0, 0.0, 0.0,
         );
-        // Use the `bone_set_id` from the command to find the correct block of 256 matrices.
-        let bone_offset = command.bone_set_id * 256u;
+        // Use the `bone_set_id` from the command as a direct offset into the bone matrices array.
+        let bone_offset = command.bone_set_id;
         
         // Apply bone transformations with proper weight normalization
         for (var i = 0; i < 4; i = i + 1) {
             let bone_index = vertex.bone_indices[i];
             let bone_weight = vertex.bone_weights[i];
-            if (bone_weight > 0.0) {
+            if (bone_weight > 0.0 && bone_index < 256u) {
                 // Normalize the weight and blend the bone matrices
                 let normalized_weight = bone_weight / total_weight;
                 skin_transform += bone_matrices[bone_offset + bone_index] * normalized_weight;
