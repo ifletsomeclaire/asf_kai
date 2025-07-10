@@ -86,7 +86,14 @@ fn vs_main(
     let vertex = vertices[final_vertex_index];
 
     // 5. Calculate the skinning transform.
-    var skin_transform: mat4x4<f32>;
+    var skin_transform = mat4x4<f32>(
+        0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0,
+    );
+    // Use the `bone_set_id` from the command to find the correct block of 256 matrices.
+    let bone_offset = command.bone_set_id * 256u;
     
     // Calculate total weight for normalization
     var total_weight = 0.0;
@@ -94,34 +101,15 @@ fn vs_main(
         total_weight += vertex.bone_weights[i];
     }
     
-    if (total_weight > 0.0) {
-        skin_transform = mat4x4<f32>(
-            0.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 0.0,
-        );
-        // Use the `bone_set_id` from the command to find the correct block of 256 matrices.
-        let bone_offset = command.bone_set_id * 256u;
-        
-        // Apply bone transformations with proper weight normalization
-        for (var i = 0; i < 4; i = i + 1) {
-            let bone_index = vertex.bone_indices[i];
-            let bone_weight = vertex.bone_weights[i];
-            if (bone_weight > 0.0) {
-                // Normalize the weight and blend the bone matrices
-                let normalized_weight = bone_weight / total_weight;
-                skin_transform += bone_matrices[bone_offset + bone_index] * normalized_weight;
-            }
+    // Apply bone transformations with proper weight normalization
+    for (var i = 0; i < 4; i = i + 1) {
+        let bone_index = vertex.bone_indices[i];
+        let bone_weight = vertex.bone_weights[i];
+        if (bone_weight > 0.0 && total_weight > 0.0) {
+            // Normalize the weight and blend the bone matrices
+            let normalized_weight = bone_weight / total_weight;
+            skin_transform += bone_matrices[bone_offset + bone_index] * normalized_weight;
         }
-    } else {
-        // If no weights, use identity matrix
-        skin_transform = mat4x4<f32>(
-            1.0, 0.0, 0.0, 0.0,
-            0.0, 1.0, 0.0, 0.0,
-            0.0, 0.0, 1.0, 0.0,
-            0.0, 0.0, 0.0, 1.0,
-        );
     }
 
     // 6. Apply transformations.

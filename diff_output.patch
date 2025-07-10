@@ -1,0 +1,146 @@
+Only in .: .git
+Only in .: Cargo.lock
+Only in ./assets/models: Ancient_wuxia_town_wi_0707194824_texture.glb
+Only in ./assets/models: PalmTree.bin
+Only in ./assets/models: PalmTree.gltf
+Only in ./assets/models: StylizedWater.png
+Only in ./assets/models/biped: Animation_Axe_Spin_Attack_withSkin.glb
+Only in ./assets/models/biped: Animation_RunFast_withSkin.glb
+Only in ./assets/models/biped: Animation_Running_withSkin.glb
+Only in ./assets/models/biped: Animation_Walking_withSkin.glb
+Only in ./assets/models: biped(1).zip
+Only in ./assets/models: cube.bin
+Only in ./assets/models: cube.gltf
+Only in ./assets/models/pillar: base_basic_shaded.glb
+Only in ./assets: models.redb
+Only in .: clean_copy.sh
+Only in .: clean_project
+diff -ru ./clean_project/core/src/ecs/ui.rs ./core/src/ecs/ui.rs
+--- ./clean_project/core/src/ecs/ui.rs	2025-07-09 12:41:12
++++ ./core/src/ecs/ui.rs	2025-07-09 12:41:46
+@@ -138,7 +138,57 @@
+         }
+     });
+ 
+-   
++    egui::Window::new("Spawner").show(ctx, |_ui| {
++        // --- Mesh Selection ---
++        // let mesh_names = p.asset_server.get_mesh_names();
++        // if p.ui_state.spawner_selected_mesh.is_empty() {
++        //     p.ui_state.spawner_selected_mesh = mesh_names.first().cloned().unwrap_or_default();
++        // }
++        // egui::ComboBox::from_label("Mesh")
++        //     .selected_text(p.ui_state.spawner_selected_mesh.clone())
++        //     .show_ui(ui, |ui| {
++        //         for name in mesh_names {
++        //             ui.selectable_value(&mut p.ui_state.spawner_selected_mesh, name.clone(), name);
++        //         }
++        //     });
++
++        // --- Texture Selection ---
++        // let texture_names = p.asset_server.get_texture_names();
++        // if p.ui_state.spawner_selected_texture.is_empty() {
++        //     p.ui_state.spawner_selected_texture =
++        //         texture_names.first().cloned().unwrap_or_default();
++        // }
++        // egui::ComboBox::from_label("Texture")
++        //     .selected_text(p.ui_state.spawner_selected_texture.clone())
++        //     .show_ui(ui, |ui| {
++        //         for name in texture_names {
++        //             ui.selectable_value(
++        //                 &mut p.ui_state.spawner_selected_texture,
++        //                 name.clone(),
++        //                 name,
++        //             );
++        //         }
++        //     });
++
++        // ui.separator();
++
++        // if ui.button("Spawn").clicked()
++        //     && !p.ui_state.spawner_selected_mesh.is_empty()
++        //     && !p.ui_state.spawner_selected_texture.is_empty()
++        // {
++        //     p.commands.queue(SpawnInstance {
++        //         transform: GlobalTransform::default(),
++        //         mesh_name: p.ui_state.spawner_selected_mesh.clone(),
++        //         texture_name: p.ui_state.spawner_selected_texture.clone(),
++        //     });
++        // }
++
++        // if ui.button("Despawn Last").clicked() {
++        //     if let Some(entity) = p.spawned_entities.0.pop() {
++        //         p.commands.queue(DespawnInstance { entity });
++        //     }
++        // }
++    });
+ 
+     egui::CentralPanel::default().show(ctx, |ui| {
+         let rect = ui.max_rect();
+diff -ru ./clean_project/core/src/shaders/d3_animated.wgsl ./core/src/shaders/d3_animated.wgsl
+--- ./clean_project/core/src/shaders/d3_animated.wgsl	2025-07-09 12:36:07
++++ ./core/src/shaders/d3_animated.wgsl	2025-07-09 12:40:09
+@@ -86,14 +86,7 @@
+     let vertex = vertices[final_vertex_index];
+ 
+     // 5. Calculate the skinning transform.
+-    var skin_transform = mat4x4<f32>(
+-        0.0, 0.0, 0.0, 0.0,
+-        0.0, 0.0, 0.0, 0.0,
+-        0.0, 0.0, 0.0, 0.0,
+-        0.0, 0.0, 0.0, 0.0,
+-    );
+-    // Use the `bone_set_id` from the command to find the correct block of 256 matrices.
+-    let bone_offset = command.bone_set_id * 256u;
++    var skin_transform: mat4x4<f32>;
+     
+     // Calculate total weight for normalization
+     var total_weight = 0.0;
+@@ -101,15 +94,34 @@
+         total_weight += vertex.bone_weights[i];
+     }
+     
+-    // Apply bone transformations with proper weight normalization
+-    for (var i = 0; i < 4; i = i + 1) {
+-        let bone_index = vertex.bone_indices[i];
+-        let bone_weight = vertex.bone_weights[i];
+-        if (bone_weight > 0.0 && total_weight > 0.0) {
+-            // Normalize the weight and blend the bone matrices
+-            let normalized_weight = bone_weight / total_weight;
+-            skin_transform += bone_matrices[bone_offset + bone_index] * normalized_weight;
++    if (total_weight > 0.0) {
++        skin_transform = mat4x4<f32>(
++            0.0, 0.0, 0.0, 0.0,
++            0.0, 0.0, 0.0, 0.0,
++            0.0, 0.0, 0.0, 0.0,
++            0.0, 0.0, 0.0, 0.0,
++        );
++        // Use the `bone_set_id` from the command to find the correct block of 256 matrices.
++        let bone_offset = command.bone_set_id * 256u;
++        
++        // Apply bone transformations with proper weight normalization
++        for (var i = 0; i < 4; i = i + 1) {
++            let bone_index = vertex.bone_indices[i];
++            let bone_weight = vertex.bone_weights[i];
++            if (bone_weight > 0.0) {
++                // Normalize the weight and blend the bone matrices
++                let normalized_weight = bone_weight / total_weight;
++                skin_transform += bone_matrices[bone_offset + bone_index] * normalized_weight;
++            }
+         }
++    } else {
++        // If no weights, use identity matrix
++        skin_transform = mat4x4<f32>(
++            1.0, 0.0, 0.0, 0.0,
++            0.0, 1.0, 0.0, 0.0,
++            0.0, 0.0, 1.0, 0.0,
++            0.0, 0.0, 0.0, 1.0,
++        );
+     }
+ 
+     // 6. Apply transformations.
+Only in ./database: models.redb
+Only in .: diff_output.patch
+Only in .: interner
+Only in .: target
+Only in .: tests

@@ -1,0 +1,5 @@
+/target
+
+# Ignore generated database files
+*.redb
+*.log

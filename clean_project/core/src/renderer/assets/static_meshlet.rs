@@ -1,29 +1,36 @@
+use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
 use redb::{ReadOnlyTable, ReadableTable};
 use std::collections::HashMap;
-use types::{AnimatedModel, SkinnedVertex, AABB, Skeleton, Animation};
+use types::{Model, Vertex};
 use wgpu::util::DeviceExt;
-use bevy_ecs::prelude::Resource;
 
-use crate::renderer::assets::static_meshlet::{DrawCommand, MeshletDescription};
-
-pub struct ModelMeshlets {
-    pub meshlet_indices: Vec<u32>, // Indices into the global meshlets array
-    pub texture_id: u32,
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+pub struct MeshletDescription {
+    pub vertex_list_offset: u32,
+    pub triangle_list_offset: u32,
+    pub triangle_count: u32,
+    pub vertex_count: u32,
 }
 
-#[derive(Resource)]
-pub struct AnimatedMeshletManager {
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+pub struct DrawCommand {
+    pub meshlet_id: u32,
+    pub transform_id: u32,
+    pub texture_id: u32,
+    pub _padding: u32,
+}
+
+pub struct MeshletManager {
     // CPU data
-    pub skeletons: HashMap<String, Skeleton>,
-    pub animations: HashMap<String, Animation>,
-    pub vertices: Vec<SkinnedVertex>,
+    pub vertices: Vec<Vertex>,
     pub meshlet_vertex_indices: Vec<u32>,
     pub meshlet_triangle_indices: Vec<u8>,
     pub meshlets: Vec<MeshletDescription>,
     pub transforms: Vec<Mat4>,
     pub draw_commands: Vec<DrawCommand>,
-    pub model_meshlets: HashMap<String, Vec<ModelMeshlets>>, // Maps model name to its meshlets
 
     // GPU resources
     pub vertex_buffer: Option<wgpu::Buffer>,
@@ -39,11 +46,10 @@ pub struct AnimatedMeshletManager {
     pub instance_bind_group: Option<wgpu::BindGroup>,
 }
 
-impl AnimatedMeshletManager {
+impl MeshletManager {
     pub fn new(
         device: &wgpu::Device,
         model_table: &ReadOnlyTable<&str, &[u8]>,
-        animation_table: &ReadOnlyTable<&str, &[u8]>,
         texture_map: &HashMap<String, u32>,
     ) -> Self {
         let mut all_vertices = Vec::new();
@@ -51,42 +57,21 @@ impl AnimatedMeshletManager {
         let mut all_meshlet_triangle_indices = Vec::new();
         let mut all_meshlets = Vec::new();
         let mut draw_commands: Vec<DrawCommand> = Vec::new();
-        let mut model_meshlets = HashMap::new();
 
-        let mut skeletons = HashMap::new();
-        let animations: HashMap<String, Animation> = animation_table
-            .iter()
-            .unwrap()
-            .filter_map(|result| {
-                result.ok().and_then(|(name, anim_data)| {
-                    bincode::deserialize::<Animation>(anim_data.value())
-                        .ok()
-                        .map(|anim| (name.value().to_string(), anim))
-                })
-            })
-            .collect();
-
-        let models: Vec<AnimatedModel> = model_table
+        let models: Vec<Model> = model_table
             .iter()
             .unwrap()
             .filter_map(|result| {
                 result.ok().and_then(|(_, model_data)| {
-                    bincode::deserialize::<AnimatedModel>(model_data.value()).ok()
+                    bincode::deserialize::<Model>(model_data.value()).ok()
                 })
             })
             .collect();
 
-        println!("[Asset Loading] Found {} animated models in the database.", models.len());
-
-        let aabbs: Vec<AABB> = models.iter().map(|model| model.aabb).collect();
+        let aabbs: Vec<types::AABB> = models.iter().map(|model| model.aabb).collect();
         let transforms = crate::renderer::assets::layout_models_in_a_row(&aabbs);
 
         for (transform_id, model) in models.iter().enumerate() {
-            println!("[Asset Loading] Loading animated model: '{}'", model.name);
-            skeletons.insert(model.name.clone(), model.skeleton.clone());
-            
-            let mut model_meshlets_list = Vec::new();
-
             for mesh in &model.meshes {
                 if let Some(mesh_meshlets) = &mesh.meshlets {
                     let vertex_base = all_vertices.len() as u32;
@@ -109,15 +94,6 @@ impl AnimatedMeshletManager {
                         .and_then(|name| texture_map.get(name).copied())
                         .unwrap_or(0);
 
-                    println!(
-                        "  -> Mesh '{}' has {} vertices and {} meshlets.",
-                        mesh.name,
-                        mesh.vertices.len(),
-                        mesh.meshlets.as_ref().map_or(0, |m| m.meshlets.len())
-                    );
-
-                    let mut meshlet_indices = Vec::new();
-
                     for m in &mesh_meshlets.meshlets {
                         let desc = MeshletDescription {
                             vertex_list_offset: meshlet_vertex_index_base + m.vertex_offset,
@@ -127,79 +103,61 @@ impl AnimatedMeshletManager {
                         };
                         all_meshlets.push(desc);
 
-                        let meshlet_id = (all_meshlets.len() - 1) as u32;
-                        meshlet_indices.push(meshlet_id);
-
                         let draw_command = DrawCommand {
-                            meshlet_id,
+                            meshlet_id: (all_meshlets.len() - 1) as u32,
                             transform_id: transform_id as u32,
                             texture_id,
                             _padding: 0,
                         };
                         draw_commands.push(draw_command);
                     }
-
-                    model_meshlets_list.push(ModelMeshlets {
-                        meshlet_indices,
-                        texture_id,
-                    });
-
                 }
             }
-
-            println!("  -> Stored {} mesh groups for this model.", model_meshlets_list.len());
-            model_meshlets.insert(model.name.clone(), model_meshlets_list);
         }
-
-        println!(
-            "[Asset Loading] AnimatedMeshletManager created. Total vertices: {}, Total meshlets: {}",
-            all_vertices.len(),
-            all_meshlets.len()
-        );
 
         let vertex_buffer =
             Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Skinned Vertex Buffer"),
+                label: Some("Vertex Buffer"),
                 contents: bytemuck::cast_slice(&all_vertices),
                 usage: wgpu::BufferUsages::STORAGE,
             }));
         let meshlet_vertex_index_buffer =
             Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Animated Meshlet Vertex Index Buffer"),
+                label: Some("Meshlet Vertex Index Buffer"),
                 contents: bytemuck::cast_slice(&all_meshlet_vertex_indices),
                 usage: wgpu::BufferUsages::STORAGE,
             }));
         let meshlet_triangle_index_buffer =
             Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Animated Meshlet Triangle Index Buffer"),
+                label: Some("Meshlet Triangle Index Buffer"),
                 contents: bytemuck::cast_slice(&all_meshlet_triangle_indices),
                 usage: wgpu::BufferUsages::STORAGE,
             }));
         let meshlet_description_buffer =
             Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Animated Meshlet Description Buffer"),
+                label: Some("Meshlet Description Buffer"),
                 contents: bytemuck::cast_slice(&all_meshlets),
                 usage: wgpu::BufferUsages::STORAGE,
             }));
         let transform_buffer =
             Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Animated Transform Buffer"),
+                label: Some("Transform Buffer"),
                 contents: bytemuck::cast_slice(&transforms),
                 usage: wgpu::BufferUsages::STORAGE,
             }));
         let indirection_buffer =
             Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Animated Indirection Buffer"),
+                label: Some("Indirection Buffer"),
                 contents: bytemuck::cast_slice(&draw_commands),
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
             }));
 
         let mesh_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Animated Mesh Data Bind Group Layout"),
+                label: Some("Mesh Static Data Bind Group Layout"),
                 entries: &[
-                    // Static Mesh Data
-                    wgpu::BindGroupLayoutEntry { // vertices
+                    // vertices
+                    wgpu::BindGroupLayoutEntry {
                         binding: 0,
                         visibility: wgpu::ShaderStages::VERTEX,
                         ty: wgpu::BindingType::Buffer {
@@ -209,7 +167,8 @@ impl AnimatedMeshletManager {
                         },
                         count: None,
                     },
-                    wgpu::BindGroupLayoutEntry { // meshlet_vertex_indices
+                    // meshlet_vertex_indices
+                    wgpu::BindGroupLayoutEntry {
                         binding: 1,
                         visibility: wgpu::ShaderStages::VERTEX,
                         ty: wgpu::BindingType::Buffer {
@@ -219,7 +178,8 @@ impl AnimatedMeshletManager {
                         },
                         count: None,
                     },
-                    wgpu::BindGroupLayoutEntry { // meshlet_triangle_indices
+                    // meshlet_triangle_indices
+                    wgpu::BindGroupLayoutEntry {
                         binding: 2,
                         visibility: wgpu::ShaderStages::VERTEX,
                         ty: wgpu::BindingType::Buffer {
@@ -229,7 +189,8 @@ impl AnimatedMeshletManager {
                         },
                         count: None,
                     },
-                    wgpu::BindGroupLayoutEntry { // meshlet_descriptions
+                    // meshlet_descriptions
+                    wgpu::BindGroupLayoutEntry {
                         binding: 3,
                         visibility: wgpu::ShaderStages::VERTEX,
                         ty: wgpu::BindingType::Buffer {
@@ -243,7 +204,7 @@ impl AnimatedMeshletManager {
             });
 
         let mesh_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Animated Mesh Bind Group"),
+            label: Some("Mesh Bind Group"),
             layout: &mesh_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -276,7 +237,7 @@ impl AnimatedMeshletManager {
 
         let instance_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Animated Instance Data Bind Group Layout"),
+                label: Some("Instance Bind Group Layout"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
@@ -302,7 +263,7 @@ impl AnimatedMeshletManager {
             });
 
         let instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Animated Instance Bind Group"),
+            label: Some("Instance Bind Group"),
             layout: &instance_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -317,15 +278,12 @@ impl AnimatedMeshletManager {
         });
 
         Self {
-            skeletons,
-            animations,
             vertices: all_vertices,
             meshlet_vertex_indices: all_meshlet_vertex_indices,
             meshlet_triangle_indices: all_meshlet_triangle_indices,
             meshlets: all_meshlets,
             transforms,
             draw_commands,
-            model_meshlets, // Initialize the new field
 
             vertex_buffer,
             meshlet_vertex_index_buffer,
