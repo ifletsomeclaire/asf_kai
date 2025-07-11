@@ -28,12 +28,12 @@ impl Time {
         self.elapsed += self.delta;
     }
 
-    pub fn delta_seconds(&self) -> f32 {
-        self.delta.as_secs_f32()
+    pub fn delta_seconds(&self) -> f64 {
+        self.delta.as_secs_f64()
     }
 
-    pub fn elapsed_seconds(&self) -> f32 {
-        self.elapsed.as_secs_f32()
+    pub fn elapsed_seconds(&self) -> f64 {
+        self.elapsed.as_secs_f64()
     }
 }
 

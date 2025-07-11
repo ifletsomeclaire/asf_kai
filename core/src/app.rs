@@ -141,18 +141,18 @@ impl Custom3d {
         // Spawn a test animated entity
         let model_names = [
             "Animation_Running_withSkin",
-            // "Animation_Walking_withSkin", 
-            // "Animation_RunFast_withSkin",
-            // "Animation_Axe_Spin_Attack_withSkin",
+            "Animation_Walking_withSkin", 
+            "Animation_RunFast_withSkin",
+            "Animation_Axe_Spin_Attack_withSkin",
         ];
         
   
 
         let animations = [
             "Armature|running|baselayer",
-            // "Armature|walking_man|baselayer", 
-            // "Armature|RunFast|baselayer",
-            // "Armature|Axe_Spin_Attack|baselayer",
+            "Armature|walking_man|baselayer", 
+            "Armature|RunFast|baselayer",
+            "Armature|Axe_Spin_Attack|baselayer",
         ];
 
         // Debug: Print available animated models

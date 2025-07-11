@@ -6,6 +6,7 @@ use eframe::egui;
 use crate::{
     config::Config,
     ecs::{
+        animation::AnimationPlayer,
         camera::{Camera, OrbitCamera},
         // commands::{DespawnInstance, SpawnInstance},
         time::Time,
@@ -54,6 +55,8 @@ pub struct UiSystemParams<'w, 's> {
     events: EventWriter<'w, ResizeEvent>,
     orbit_camera: Res<'w, OrbitCamera>,
     camera_query: Query<'w, 's, &'static Camera>,
+    // --- For Animation Control ---
+    animation_player_query: Query<'w, 's, &'static mut AnimationPlayer>,
     // --- For Spawner ---
     commands: Commands<'w, 's>,
     asset_server: Res<'w, AssetServer>,
@@ -84,6 +87,42 @@ pub fn ui_system(mut p: UiSystemParams) {
         if ui.checkbox(&mut p.config.vsync, "V-Sync").changed() {
             p.config.save();
             ui.label("(Requires restart)");
+        }
+    });
+
+    // Add Animation Control Window
+    egui::Window::new("Animation Control").show(ctx, |ui| {
+        let mut animation_players: Vec<_> = p.animation_player_query.iter_mut().collect();
+        
+        if animation_players.is_empty() {
+            ui.label("No animated entities found.");
+        } else {
+            ui.label(format!("Found {} animated entities:", animation_players.len()));
+            
+            for (i, player) in animation_players.iter_mut().enumerate() {
+                ui.separator();
+                ui.label(format!("Entity {}: {}", i + 1, player.animation_name));
+                
+                // Animation speed slider
+                let mut speed = player.speed;
+                if ui.add(egui::Slider::new(&mut speed, 0.0..=5.0).text("Speed")).changed() {
+                    player.speed = speed;
+                }
+                ui.label(format!("Current speed: {:.2}x", speed));
+                
+                // Play/Pause toggle
+                if ui.checkbox(&mut player.playing, "Playing").changed() {
+                    // The checkbox will automatically update the playing state
+                }
+                
+                // Loop toggle
+                if ui.checkbox(&mut player.looping, "Looping").changed() {
+                    // The checkbox will automatically update the looping state
+                }
+                
+                // Current time display
+                ui.label(format!("Current time: {:.2}s", player.current_time));
+            }
         }
     });
 

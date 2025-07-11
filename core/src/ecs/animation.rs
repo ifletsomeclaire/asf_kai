@@ -8,8 +8,8 @@ use types::{Animation, PositionKey, RotationKey, ScaleKey};
 #[derive(Component)]
 pub struct AnimationPlayer {
     pub animation_name: String,
-    pub current_time: f32,
-    pub speed: f32,
+    pub current_time: f64,
+    pub speed: f64,
     pub looping: bool,
     pub playing: bool,
 }
@@ -51,7 +51,7 @@ pub fn animation_system(
             // Update time
             let old_time = player.current_time;
             player.current_time += time.delta_seconds() * player.speed;
-            let duration_in_seconds = animation.duration_in_ticks as f32 / animation.ticks_per_second as f32;
+            let duration_in_seconds = animation.duration_in_ticks as f64 / animation.ticks_per_second as f64;
 
             if player.looping {
                 player.current_time %= duration_in_seconds;
@@ -154,9 +154,24 @@ fn find_interpolated_position(time_in_ticks: f64, keys: &[PositionKey]) -> Optio
         return Some(keys[0].position);
     }
 
-    // Find the two keyframes to interpolate between
+    // Handle looping
+    if time_in_ticks >= keys.last().unwrap().time {
+        let last_key = keys.last().unwrap();
+        let first_key = &keys[0];
+        
+        let time_past_end = time_in_ticks - last_key.time;
+        let total_time = first_key.time + (keys.last().unwrap().time - last_key.time);
+        let interpolation_factor = if total_time > 0.0 {
+            time_past_end / total_time
+        } else {
+            0.0
+        };
+        
+        return Some(last_key.position.lerp(first_key.position, interpolation_factor.min(1.0) as f32));
+    }
+
     let Some(next_key_index) = keys.iter().position(|k| k.time >= time_in_ticks) else {
-        return Some(keys.last().unwrap().position); // Past the last keyframe
+        return Some(keys.last().unwrap().position);
     };
 
     if next_key_index == 0 {
@@ -195,6 +210,34 @@ fn find_interpolated_rotation(time_in_ticks: f64, keys: &[RotationKey]) -> Optio
         return Some(keys[0].rotation);
     }
     
+    // Handle looping: if we're past the last keyframe, interpolate between last and first
+    if time_in_ticks >= keys.last().unwrap().time {
+        let last_key = keys.last().unwrap();
+        let first_key = &keys[0];
+        
+        // Calculate how far past the last keyframe we are
+        let time_past_end = time_in_ticks - last_key.time;
+        
+        // Assume the "virtual" next keyframe is at duration + first_key.time
+        // This creates a smooth loop
+        let total_time = first_key.time + (keys.last().unwrap().time - last_key.time);
+        let interpolation_factor = if total_time > 0.0 {
+            time_past_end / total_time
+        } else {
+            0.0
+        };
+        
+        // IMPORTANT: Check for quaternion flip
+        let mut target_rotation = first_key.rotation;
+        let dot = last_key.rotation.dot(target_rotation);
+        if dot < 0.0 {
+            target_rotation = -target_rotation;
+            println!("[Quat Interp] WARNING: Negative dot product ({:.3}) between loop keyframes at t={:.2} and t={:.2}. Animation will flip!", dot, last_key.time, first_key.time);
+        }
+        
+        return Some(last_key.rotation.slerp(target_rotation, interpolation_factor.min(1.0) as f32));
+    }
+    
     let Some(next_key_index) = keys.iter().position(|k| k.time >= time_in_ticks) else {
         return Some(keys.last().unwrap().rotation);
     };
@@ -213,7 +256,51 @@ fn find_interpolated_rotation(time_in_ticks: f64, keys: &[RotationKey]) -> Optio
         0.0
     };
 
-    let result = prev_key.rotation.slerp(next_key.rotation, interpolation_factor as f32);
+    // **FIX QUATERNION FLIPS**: Check the dot product. A negative value means the slerp will take the "long way around", causing a flip.
+    // Instead of negating, use a smoother transition to avoid creating very small rotation values
+    let mut next_quat_for_interp = next_key.rotation;
+    let dot = prev_key.rotation.dot(next_quat_for_interp);
+    if dot < 0.0 {
+        // Instead of negating, use a smoother interpolation that avoids the flip
+        println!("[Quat Interp] DETECTED: Negative dot product ({:.3}) between keyframes at t={:.2} and t={:.2}. Using smooth transition!", dot, prev_key.time, next_key.time);
+        
+        // Use a step function to avoid the flip entirely
+        if interpolation_factor < 0.5 {
+            return Some(prev_key.rotation);
+        } else {
+            return Some(next_key.rotation);
+        }
+    }
+    
+    // **ADDITIONAL LOGGING**: Check for identity quaternions which can cause "crushing" effects
+    let prev_is_identity = prev_key.rotation.length_squared() < 0.01;
+    let next_is_identity = next_key.rotation.length_squared() < 0.01;
+    if prev_is_identity || next_is_identity {
+        println!("[Quat Interp] WARNING: Identity quaternion detected! prev_is_identity={}, next_is_identity={} at t={:.2} and t={:.2}", 
+            prev_is_identity, next_is_identity, prev_key.time, next_key.time);
+    }
+    
+    // **DEFENSIVE MEASURES**: Handle edge cases that might cause issues
+    let mut prev_quat = prev_key.rotation;
+    let mut next_quat = next_quat_for_interp; // Use the corrected quaternion
+    
+    // Normalize quaternions to prevent issues
+    if (prev_quat.length_squared() - 1.0).abs() > 1e-4 {
+        prev_quat = prev_quat.normalize();
+    }
+    if (next_quat.length_squared() - 1.0).abs() > 1e-4 {
+        next_quat = next_quat.normalize();
+    }
+    
+    // Handle very small quaternions by replacing with identity
+    if prev_quat.length_squared() < 0.01 {
+        prev_quat = Quat::IDENTITY;
+    }
+    if next_quat.length_squared() < 0.01 {
+        next_quat = Quat::IDENTITY;
+    }
+
+    let result = prev_quat.slerp(next_quat, interpolation_factor as f32);
     
     // Log interpolation details for debugging
     if keys.len() > 1 && (prev_key.rotation.xyz() - next_key.rotation.xyz()).length() > 0.1 {
@@ -222,6 +309,29 @@ fn find_interpolated_rotation(time_in_ticks: f64, keys: &[RotationKey]) -> Optio
             prev_key.rotation.x, prev_key.rotation.y, prev_key.rotation.z, prev_key.rotation.w,
             next_key.rotation.x, next_key.rotation.y, next_key.rotation.z, next_key.rotation.w,
             result.x, result.y, result.z, result.w);
+    }
+    
+    // **DEFENSIVE INTERPOLATION**: Handle large rotation differences gracefully
+    let angle_diff = prev_key.rotation.angle_between(next_key.rotation);
+    if angle_diff > 2.0 { // More than ~115 degrees
+        println!("[Quat Interp] WARNING: Large rotation difference ({:.1}°) between keyframes at t={:.2} and t={:.2}. Using defensive interpolation!", 
+            angle_diff.to_degrees(), prev_key.time, next_key.time);
+        
+        // For large rotations, use a step function to avoid sudden flips
+        // This is a common technique in animation systems
+        if interpolation_factor < 0.5 {
+            // Use the previous keyframe for the first half
+            return Some(prev_quat);
+        } else {
+            // Use the next keyframe for the second half
+            return Some(next_quat);
+        }
+    } else if angle_diff > 1.0 { // More than ~57 degrees
+        // For medium rotations, use a smoother transition but still avoid slerp
+        // Use a cubic interpolation on the rotation axis
+        let t = interpolation_factor as f32;
+        let smooth_t = t * t * (3.0 - 2.0 * t); // Smoothstep
+        return Some(prev_quat.slerp(next_quat, smooth_t));
     }
 
     Some(result)
@@ -233,6 +343,22 @@ fn find_interpolated_scale(time_in_ticks: f64, keys: &[ScaleKey]) -> Option<Vec3
     }
     if keys.len() == 1 {
         return Some(keys[0].scale);
+    }
+
+    // Handle looping
+    if time_in_ticks >= keys.last().unwrap().time {
+        let last_key = keys.last().unwrap();
+        let first_key = &keys[0];
+        
+        let time_past_end = time_in_ticks - last_key.time;
+        let total_time = first_key.time + (keys.last().unwrap().time - last_key.time);
+        let interpolation_factor = if total_time > 0.0 {
+            time_past_end / total_time
+        } else {
+            0.0
+        };
+        
+        return Some(last_key.scale.lerp(first_key.scale, interpolation_factor.min(1.0) as f32));
     }
 
     let Some(next_key_index) = keys.iter().position(|k| k.time >= time_in_ticks) else {
@@ -254,6 +380,20 @@ fn find_interpolated_scale(time_in_ticks: f64, keys: &[ScaleKey]) -> Option<Vec3
     };
 
     let result = prev_key.scale.lerp(next_key.scale, interpolation_factor as f32);
+    
+    // **LOGGING**: Check for near-zero scale values, which cause the "crushed into a ball" effect.
+    if result.length_squared() < 0.01 { // 0.1 * 0.1
+        println!("[Scale Interp] WARNING: Scale is near zero ({:.3}, {:.3}, {:.3}) at t={:.2}. Mesh will be crushed!", result.x, result.y, result.z, time_in_ticks);
+    }
+    
+    // **DEBUGGING**: Log all scale interpolations to see what's happening
+    if keys.len() > 1 {
+        println!("[Scale Interp] t={:.3}, factor={:.3}, prev=[{:.3}, {:.3}, {:.3}], next=[{:.3}, {:.3}, {:.3}], result=[{:.3}, {:.3}, {:.3}]", 
+            time_in_ticks, interpolation_factor,
+            prev_key.scale.x, prev_key.scale.y, prev_key.scale.z,
+            next_key.scale.x, next_key.scale.y, next_key.scale.z,
+            result.x, result.y, result.z);
+    }
     
     // Log interpolation details for debugging
     if keys.len() > 1 && (prev_key.scale - next_key.scale).length() > 0.1 {

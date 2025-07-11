@@ -1,4 +1,35 @@
 Only in .: .git
+diff -ru ./clean_project/.gitignore ./.gitignore
+--- ./clean_project/.gitignore	2025-07-03 13:06:17
++++ ./.gitignore	2025-07-10 02:22:08
+@@ -3,3 +3,26 @@
+ # Ignore generated database files
+ *.redb
+ *.log
++*.patch
++
++# Xcode project files
++*.xcodeproj/
++*.xcworkspace/
++*.xcuserdata/
++*.xcscheme
++*.entitlements
++*.storyboard
++*.swift
++*.h
++*.metal
++*.xcassets/
++*.plist
++
++# macOS system files
++.DS_Store
++.DS_Store?
++._*
++.Spotlight-V100
++.Trashes
++ehthumbs.db
++Thumbs.db
+\ No newline at end of file
 Only in .: Cargo.lock
 Only in ./assets/models: Ancient_wuxia_town_wi_0707194824_texture.glb
 Only in ./assets/models: PalmTree.bin
@@ -15,184 +46,23 @@ Only in ./assets/models/pillar: base_basic_shaded.glb
 Only in ./assets: models.redb
 Only in .: clean_copy.sh
 Only in .: clean_project
-diff -ru ./clean_project/core/src/ecs/animation.rs ./core/src/ecs/animation.rs
---- ./clean_project/core/src/ecs/animation.rs	2025-07-09 14:05:38
-+++ ./core/src/ecs/animation.rs	2025-07-09 22:45:52
-@@ -1,4 +1,5 @@
- use bevy_ecs::prelude::*;
-+use bevy_transform::components::GlobalTransform;
- use glam::{Mat4, Quat, Vec3};
- use crate::ecs::time::Time;
- use crate::renderer::assets::AssetServer;
-@@ -38,9 +39,9 @@
- pub fn animation_system(
-     time: Res<Time>,
-     asset_server: Res<AssetServer>,
--    mut query: Query<(&mut AnimationPlayer, &mut BoneMatrices, &AnimatedInstance)>,
-+    mut query: Query<(&mut AnimationPlayer, &mut BoneMatrices, &AnimatedInstance, &GlobalTransform)>,
- ) {
--    for (mut player, mut bone_matrices, instance) in query.iter_mut() {
-+    for (mut player, mut bone_matrices, instance, transform) in query.iter_mut() {
-         if !player.playing {
-             continue;
-         }
-@@ -58,6 +59,7 @@
-             }
-             
-             let animation_time_in_ticks = player.current_time as f64 * animation.ticks_per_second;
-+            let model_matrix = transform.compute_matrix(); // Get the entity's world transform matrix
+Binary files ./clean_project/core/.DS_Store and ./core/.DS_Store differ
+diff -ru ./clean_project/core/src/app.rs ./core/src/app.rs
+--- ./clean_project/core/src/app.rs	2025-07-10 00:43:05
++++ ./core/src/app.rs	2025-07-10 02:30:18
+@@ -186,7 +186,7 @@
+         for (i, (model_name, anim_name)) in model_names.iter().zip(animations.iter()).enumerate() {
+              // Create a slight offset for each model so they don't overlap
+             let mut transform = Transform::from_xyz(i as f32 * 2.0, 0.0, 0.0);
+-            transform.scale = glam::Vec3::splat(0.01); // Adjust scale if models are too large
++            transform.scale = glam::Vec3::splat(1.0); // Changed from 0.01 to isolate scale issue
  
-             if let Some(skeleton) = &asset_server.animated_meshlet_manager.skeletons.get(&instance.model_name) {
-                 // Calculate local pose for each bone
-@@ -74,10 +76,11 @@
-                     global_poses[i] = parent_pose * local_poses[i];
-                 }
- 
--                // Calculate final skinning matrices
-+                // Calculate final skinning matrices with world transform applied
-                 bone_matrices.matrices.resize(256, Mat4::IDENTITY);
-                 for (i, bone) in skeleton.bones.iter().enumerate() {
--                    bone_matrices.matrices[i] = global_poses[i] * bone.inverse_bind_pose;
-+                    // Pre-multiply by the entity's world transform to get world-space bone matrices
-+                    bone_matrices.matrices[i] = model_matrix * global_poses[i] * bone.inverse_bind_pose;
-                 }
-             }
-         }
-diff -ru ./clean_project/core/src/renderer/pipelines/d3_animated_pipeline.rs ./core/src/renderer/pipelines/d3_animated_pipeline.rs
---- ./clean_project/core/src/renderer/pipelines/d3_animated_pipeline.rs	2025-07-09 22:51:03
-+++ ./core/src/renderer/pipelines/d3_animated_pipeline.rs	2025-07-09 23:05:38
-@@ -67,7 +67,7 @@
-                         count: None,
-                     },
-                     wgpu::BindGroupLayoutEntry {
--                        binding: 1, // Bone Matrices
-+                        binding: 1, // Bone Matrices (now include world transform)
-                         visibility: wgpu::ShaderStages::VERTEX,
-                         ty: wgpu::BindingType::Buffer {
-                             ty: wgpu::BufferBindingType::Storage { read_only: true },
-@@ -76,16 +76,6 @@
-                         },
-                         count: None,
-                     },
--                    wgpu::BindGroupLayoutEntry {
--                        binding: 2, // Transform Buffer
--                        visibility: wgpu::ShaderStages::VERTEX,
--                        ty: wgpu::BindingType::Buffer {
--                            ty: wgpu::BufferBindingType::Storage { read_only: true },
--                            has_dynamic_offset: false,
--                            min_binding_size: None,
--                        },
--                        count: None,
--                    },
-                 ],
-             });
- 
-@@ -181,18 +171,15 @@
-     // --- 1. Prepare Per-Frame Data (Dynamically) ---
-     let mut draw_commands = Vec::new();
-     let mut all_bone_matrices = Vec::new();
--    let mut all_transforms = Vec::new();
- 
-     // Track bone matrix offsets for each instance
-     let mut bone_matrix_offsets = Vec::new();
-     
-     // Iterate over the entities that are actually in the scene right now.
--    for (instance_index, (instance, bone_matrices, transform)) in
-+    for (instance_index, (instance, bone_matrices, _transform)) in
-         animated_instance_query.iter().enumerate()
-     {
--        // Add the current entity's transform to our list for this frame.
--        all_transforms.push(transform.compute_matrix());
--        let transform_id = (all_transforms.len() - 1) as u32;
-+        // Note: We no longer need to track transforms separately since bone matrices include world transform
- 
-         // Track where this instance's bone matrices start
-         let bone_matrix_offset = all_bone_matrices.len() as u32;
-@@ -211,14 +198,14 @@
-                     meshlet_group_idx, model_meshlets.meshlet_indices.len(), model_meshlets.texture_id);
-                 for (meshlet_idx, &meshlet_id) in model_meshlets.meshlet_indices.iter().enumerate() {
-                     if meshlet_idx < 3 { // Only print first 3 for brevity
--                        println!("      Meshlet[{}]: id={}, bone_set_id={}, transform_id={}", 
--                            meshlet_idx, meshlet_id, bone_matrix_offset, transform_id);
-+                        println!("      Meshlet[{}]: id={}, bone_set_id={}", 
-+                            meshlet_idx, meshlet_id, bone_matrix_offset);
-                     }
-                     // Create a new draw command with the correct, frame-specific IDs.
-                     draw_commands.push(AnimatedDrawCommand {
-                         meshlet_id,
-                         bone_set_id: bone_matrix_offset, // Use actual offset, not instance index
--                        transform_id,
-+                        transform_id: 0, // No longer used since bone matrices include world transform
-                         texture_id: model_meshlets.texture_id,
-                     });
-                 }
-@@ -245,7 +232,6 @@
-         );
-     }
-     println!("[Animated Render] Total bone matrices: {}", all_bone_matrices.len());
--    println!("[Animated Render] Total transforms: {}", all_transforms.len());
-     
-     println!("\n[Animated Render] Bone matrix layout:");
-     let mut offset = 0;
-@@ -281,11 +267,7 @@
-         usage: wgpu::BufferUsages::STORAGE,
-     });
- 
--    let transform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
--        label: Some("per_frame_animated_transform_buffer"),
--        contents: bytemuck::cast_slice(&all_transforms),
--        usage: wgpu::BufferUsages::STORAGE,
--    });
-+    // Note: We no longer need a separate transform buffer since bone matrices include world transform
- 
-     let indirection_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-         label: Some("per_frame_animated_indirection_buffer"),
-@@ -315,10 +297,7 @@
-                 binding: 1,
-                 resource: bone_matrix_buffer.as_entire_binding(),
-             },
--            wgpu::BindGroupEntry {
--                binding: 2,
--                resource: transform_buffer.as_entire_binding(),
--            },
-+            // Note: Binding 2 (transform_buffer) is no longer used since bone matrices include world transform
-         ],
-     });
- 
-diff -ru ./clean_project/core/src/shaders/d3_animated.wgsl ./core/src/shaders/d3_animated.wgsl
---- ./clean_project/core/src/shaders/d3_animated.wgsl	2025-07-09 21:55:06
-+++ ./core/src/shaders/d3_animated.wgsl	2025-07-09 22:47:35
-@@ -45,8 +45,7 @@
- 
- // @group(2): Per-Draw Data
- @group(2) @binding(0) var<storage, read> indirection_buffer: array<AnimatedDrawCommand>;
--@group(2) @binding(1) var<storage, read> bone_matrices: array<mat4x4<f32>>;
--@group(2) @binding(2) var<storage, read> transform_buffer: array<mat4x4<f32>>;
-+@group(2) @binding(1) var<storage, read> bone_matrices: array<mat4x4<f32>>; // Bone matrices now include world transform
- 
- // @group(3): Texture Data (provided by AssetServer)
- @group(3) @binding(0) var texture_array: texture_2d_array<f32>;
-@@ -125,15 +124,15 @@
-     }
- 
-     // 6. Apply transformations.
--    let model_transform = transform_buffer[command.transform_id];
-+    // The bone matrices now include the world transform, so we don't need to apply model_transform again
-     let skinned_pos = skin_transform * vertex.position;
--    let world_pos = model_transform * skinned_pos;
-+    let world_pos = skinned_pos; // Bone matrices already include world transform
- 
-     output.clip_position = camera * world_pos;
-     
-     // Safely calculate the world normal
-     let skinned_normal = skin_transform * vec4<f32>(vertex.normal.xyz, 0.0);
--    let world_normal_unnormalized = (model_transform * skinned_normal).xyz;
-+    let world_normal_unnormalized = skinned_normal.xyz; // Bone matrices already include world transform
- 
-     // Prevent normalization of a zero vector
-     if (length(world_normal_unnormalized) > 0.0001) {
+             println!("[App] Spawning instance {}: model='{}', animation='{}', transform={:?}", 
+                 i, model_name, anim_name, transform.translation);
+Only in ./clean_project/database: database.xcodeproj
 Only in ./database: models.redb
 Only in .: diff_output.patch
+Only in ./clean_project: idk
 Only in .: interner
 Only in .: log.log
 Only in .: target

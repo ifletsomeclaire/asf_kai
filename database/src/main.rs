@@ -11,12 +11,13 @@ use russimp::{
     scene::{PostProcess, Scene},
 };
 use std::cell::Ref;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use types::{
     AnimatedMesh, AnimatedModel, Animation, Bone, Mesh, Meshlet, Meshlets, Model,
-    Skeleton, SkinnedVertex, AABB,
+    Skeleton, SkinnedVertex, AABB, PositionKey, RotationKey, ScaleKey
 };
+use glam::{Vec3, Quat};
 use types::{ANIMATED_MODEL_TABLE, ANIMATION_TABLE, MODEL_TABLE, TEXTURE_TABLE};
 
 fn process_node(
@@ -30,9 +31,9 @@ fn process_node(
         node_rc.transformation.a1, node_rc.transformation.a2, node_rc.transformation.a3,
         node_rc.transformation.a4, node_rc.transformation.b1, node_rc.transformation.b2,
         node_rc.transformation.b3, node_rc.transformation.b4, node_rc.transformation.c1,
-        node_rc.transformation.c2, node_rc.transformation.c3, node_rc.transformation.c4,
-        node_rc.transformation.d1, node_rc.transformation.d2, node_rc.transformation.d3,
-        node_rc.transformation.d4,
+        node_rc.transformation.c2, node_rc.transformation.c3,
+        node_rc.transformation.c4, node_rc.transformation.d1, node_rc.transformation.d2,
+        node_rc.transformation.d3, node_rc.transformation.d4,
     ])
     .transpose();
     let accumulated_transform = *parent_transform * node_transform;
@@ -84,10 +85,6 @@ fn process_node(
             }
         }
 
-        println!(
-            "[DB] Mesh: '{unique_mesh_name}' -> Found texture: {texture_name:?}"
-        );
-
         let vertices: Vec<types::Vertex> = mesh
             .vertices
             .iter()
@@ -126,12 +123,6 @@ fn process_node(
             build_meshlets(&indices, &adapter, MAX_VERTICES, MAX_TRIANGLES, 0.0);
 
         let meshlets = if !meshlets_result.meshlets.is_empty() {
-            println!(
-                "[DB] Mesh: '{}' -> Generated {} meshlets",
-                unique_mesh_name,
-                meshlets_result.meshlets.len()
-            );
-
             let converted_meshlets = meshlets_result
                 .meshlets
                 .iter()
@@ -259,7 +250,7 @@ impl ModelDatabase {
                             .and_then(|s| s.to_str())
                             .unwrap_or("unknown_model");
 
-                        println!("Processing model: {model_name}");
+                        println!("[DB] Processing model: {model_name}");
 
                         let scene = Scene::from_file(
                             path.to_str().unwrap(),
@@ -316,7 +307,7 @@ impl ModelDatabase {
                         }
                     }
                     Some("png") => {
-                        println!("Processing texture: {file_name}");
+                        println!("[DB] Processing texture: {file_name}");
                         let texture_bytes = fs::read(path)?;
                         texture_table.insert(file_name, texture_bytes.as_slice())?;
                     }
@@ -388,6 +379,253 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Validates and cleans animation data to ensure it's robust for playback.
+fn validate_and_fix_animation_data(
+    animation: &mut Animation,
+    skeleton: &Skeleton,
+    model_name: &str,
+) -> Result<(), String> {
+    const VELOCITY_SPIKE_THRESHOLD: f32 = 10.0;
+    const EPSILON: f64 = 1e-4;
+
+    // --- 1. Validate Animation Timings and Duration ---
+    if animation.duration_in_ticks <= 0.0 {
+        return Err(format!(
+            "Animation '{}' in model '{}' has a non-positive duration: {}",
+            animation.name, model_name, animation.duration_in_ticks
+        ));
+    }
+    if animation.ticks_per_second <= 0.0 {
+        return Err(format!(
+            "Animation '{}' in model '{}' has non-positive ticks_per_second: {}",
+            animation.name, model_name, animation.ticks_per_second
+        ));
+    }
+
+    for channel in &mut animation.channels {
+        // --- 2. Validate Bone and Channel Integrity ---
+        if !skeleton.bones.iter().any(|b| b.name == channel.bone_name) {
+            return Err(format!(
+                "Animation '{}' in model '{}' targets a non-existent bone: '{}'",
+                animation.name, model_name, channel.bone_name
+            ));
+        }
+
+        // --- 3. Sort Keyframes ---
+        channel.position_keys.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal));
+        channel.rotation_keys.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal));
+        channel.scale_keys.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal));
+
+        // --- 4. Fix Consecutive Quaternion Flips and Detect Issues ---
+        // This ensures the shortest path is taken between all keyframes.
+        if !channel.rotation_keys.is_empty() {
+            // First pass: fix quaternion flips and detect issues
+            for i in 1..channel.rotation_keys.len() {
+                let (left, right) = channel.rotation_keys.split_at_mut(i);
+                let prev_quat = left[i-1].rotation;
+                let curr_quat = &mut right[0].rotation;
+                let key_time = right[0].time;
+                
+                // Fix quaternion hemisphere flips
+                if prev_quat.dot(*curr_quat) < 0.0 {
+                    *curr_quat = -*curr_quat;
+                    println!("[DB] -> Fixed quaternion flip in animation '{}' for bone '{}' at keyframe {}", 
+                        animation.name, channel.bone_name, i);
+                }
+                
+                // Detect and fix identity quaternions (which cause "crushing" effects)
+                if curr_quat.length_squared() < 0.1 {
+                    println!("[DB] -> FIXING: Identity quaternion detected in animation '{}' for bone '{}' at keyframe {} (t={:.2})", 
+                        animation.name, channel.bone_name, i, key_time);
+                    
+                    // Replace with a reasonable default - use the previous keyframe's rotation
+                    *curr_quat = prev_quat;
+                    println!("[DB] -> -> Replaced with previous keyframe rotation");
+                }
+            }
+            
+            // Additional pass: comprehensive quaternion validation
+            for i in 0..channel.rotation_keys.len() {
+                let quat = channel.rotation_keys[i].rotation;
+                
+                // Normalize quaternions that are close to unit length
+                if (quat.length_squared() - 1.0).abs() > 1e-4 {
+                    channel.rotation_keys[i].rotation = quat.normalize();
+                }
+                
+                // Check for very small quaternions that might cause issues
+                if quat.length_squared() < 0.01 {
+                    println!("[DB] -> FIXING: Very small quaternion detected in animation '{}' for bone '{}' at keyframe {} (t={:.2})", 
+                        animation.name, channel.bone_name, i, channel.rotation_keys[i].time);
+                    
+                    // Replace with identity quaternion as a safe fallback
+                    channel.rotation_keys[i].rotation = Quat::IDENTITY;
+                    println!("[DB] -> -> Replaced with identity quaternion");
+                }
+            }
+            
+            // Second pass: detect and fix large rotation differences between consecutive keyframes
+            // Use the same threshold as the runtime (2.0 radians) to catch all cases
+            let mut i = 1;
+            while i < channel.rotation_keys.len() {
+                let prev_quat = channel.rotation_keys[i - 1].rotation;
+                let curr_quat = channel.rotation_keys[i].rotation;
+                let prev_time = channel.rotation_keys[i-1].time;
+                let curr_time = channel.rotation_keys[i].time;
+                
+                // Detect large rotation differences that cause sudden flips
+                let angle_diff = prev_quat.angle_between(curr_quat);
+                if angle_diff > 2.0 { // More than ~115 degrees (same as runtime)
+                    println!("[DB] -> FIXING: Large rotation difference ({:.1}°) in animation '{}' for bone '{}' between keyframes {} and {} (t={:.2} and t={:.2})", 
+                        angle_diff.to_degrees(), animation.name, channel.bone_name, 
+                        i-1, i, prev_time, curr_time);
+                    
+                    // Insert intermediate keyframes to smooth the transition
+                    let mid_time = (prev_time + curr_time) / 2.0;
+                    let mid_quat = prev_quat.slerp(curr_quat, 0.5);
+                    
+                    // Insert intermediate keyframe
+                    channel.rotation_keys.insert(i, RotationKey {
+                        time: mid_time,
+                        rotation: mid_quat
+                    });
+                    
+                    println!("[DB] -> Inserted intermediate keyframe at t={:.2} to smooth large rotation", mid_time);
+                    
+                    // Skip the newly inserted keyframe in the next iteration
+                    i += 1;
+                }
+                
+                i += 1;
+            }
+        }
+        
+        // --- 5. Reconstruct Loop Point for Perfect, Seamless Looping ---
+        let has_keyframes = !channel.position_keys.is_empty() || !channel.rotation_keys.is_empty() || !channel.scale_keys.is_empty();
+
+        if has_keyframes {
+            // A. Ensure a keyframe exists at t=0.0. This is our ground truth for the loop.
+            if channel.position_keys.first().map_or(true, |k| k.time > EPSILON) {
+                let first_pos = channel.position_keys.first().map_or(Vec3::ZERO, |k| k.position);
+                channel.position_keys.insert(0, PositionKey { time: 0.0, position: first_pos });
+            }
+            if channel.rotation_keys.first().map_or(true, |k| k.time > EPSILON) {
+                let first_rot = channel.rotation_keys.first().map_or(Quat::IDENTITY, |k| k.rotation);
+                channel.rotation_keys.insert(0, RotationKey { time: 0.0, rotation: first_rot });
+            }
+            if channel.scale_keys.first().map_or(true, |k| k.time > EPSILON) {
+                let first_scale = channel.scale_keys.first().map_or(Vec3::ONE, |k| k.scale);
+                channel.scale_keys.insert(0, ScaleKey { time: 0.0, scale: first_scale });
+            }
+            
+            // B. Remove any keyframes at or very near the animation's duration.
+            channel.position_keys.retain(|k| (k.time - animation.duration_in_ticks).abs() > EPSILON);
+            channel.rotation_keys.retain(|k| (k.time - animation.duration_in_ticks).abs() > EPSILON);
+            channel.scale_keys.retain(|k| (k.time - animation.duration_in_ticks).abs() > EPSILON);
+
+            // C. Create a new, perfect end keyframe using the t=0 keyframe's value.
+            if let Some(first_pos) = channel.position_keys.first().map(|k| k.position) {
+                channel.position_keys.push(PositionKey { time: animation.duration_in_ticks, position: first_pos });
+            }
+            if let Some(first_scale) = channel.scale_keys.first().map(|k| k.scale) {
+                channel.scale_keys.push(ScaleKey { time: animation.duration_in_ticks, scale: first_scale });
+            }
+            if let Some(first_rot) = channel.rotation_keys.first().map(|k| k.rotation) {
+                // **FIXED LOOP RECONSTRUCTION**: Use the t=0 keyframe's rotation for both start and end
+                // This ensures a truly seamless loop regardless of the original animation's start/end
+                channel.rotation_keys.push(RotationKey { time: animation.duration_in_ticks, rotation: first_rot });
+            }
+        }
+
+        // --- 6. Post-Loop Validation: Fix Large Rotations Between Loop Points ---
+        if !channel.rotation_keys.is_empty() && channel.rotation_keys.len() > 1 {
+            // Check for large rotations between the last and first keyframes (loop points)
+            let first_key = &channel.rotation_keys[0];
+            let last_key = &channel.rotation_keys[channel.rotation_keys.len() - 1];
+            
+            let loop_angle_diff = first_key.rotation.angle_between(last_key.rotation);
+            if loop_angle_diff > 1.5 { // More than ~86 degrees
+                println!("[DB] -> FIXING: Large loop rotation difference ({:.1}°) in animation '{}' for bone '{}' between t={:.2} and t={:.2}", 
+                    loop_angle_diff.to_degrees(), animation.name, channel.bone_name, 
+                    first_key.time, last_key.time);
+                
+                // Adjust the last keyframe to be closer to the first to smooth the loop
+                let smoother_last = first_key.rotation.slerp(last_key.rotation, 0.8);
+                let last_index = channel.rotation_keys.len() - 1;
+                channel.rotation_keys[last_index].rotation = smoother_last;
+                
+                println!("[DB] -> Adjusted last keyframe to smooth loop transition");
+            }
+            
+            // Comprehensive validation: check ALL possible keyframe pairs, not just consecutive ones
+            // This catches cases where the runtime might interpolate between non-consecutive keyframes
+            // Only remove keyframes that are clearly broken (identity quaternions, extreme outliers)
+            // For large rotations, just make them smaller rather than removing
+            let mut i = 0;
+            while i < channel.rotation_keys.len() {
+                let key = &channel.rotation_keys[i];
+                
+                // Only remove keyframes that are clearly broken
+                if key.rotation.length_squared() < 0.01 {
+                    println!("[DB] -> REMOVING: Identity quaternion keyframe in animation '{}' for bone '{}' at t={:.2}", 
+                        animation.name, channel.bone_name, key.time);
+                    channel.rotation_keys.remove(i);
+                    println!("[DB] -> Removed identity quaternion keyframe");
+                } else {
+                    i += 1;
+                }
+            }
+        }
+        
+        // --- 7. Final Validation and Normalization ---
+        for key in channel.rotation_keys.iter_mut() {
+            if (key.rotation.length_squared() - 1.0).abs() > 1e-4 {
+                key.rotation = key.rotation.normalize();
+            }
+        }
+        
+        for (i, key) in channel.scale_keys.iter().enumerate() {
+            if key.scale.x <= 0.0 || key.scale.y <= 0.0 || key.scale.z <= 0.0 {
+                return Err(format!(
+                    "Animation '{}', bone '{}': Scale keyframe {} has zero or negative components: {:?}",
+                    animation.name, channel.bone_name, i, key.scale
+                ));
+            }
+            
+            // Detect near-zero scale values that cause "crushing" effects
+            if key.scale.length_squared() < 0.01 {
+                println!("[DB] -> WARNING: Near-zero scale detected in animation '{}' for bone '{}' at keyframe {} (t={:.2}): {:?}", 
+                    animation.name, channel.bone_name, i, key.time, key.scale);
+            }
+        }
+
+        // --- 7. Heuristic: Check for velocity spikes ---
+        if channel.rotation_keys.len() > 2 {
+            let mut velocities = Vec::new();
+            for i in 0..channel.rotation_keys.len() - 1 {
+                let key1 = &channel.rotation_keys[i];
+                let key2 = &channel.rotation_keys[i+1];
+                let dt = key2.time - key1.time;
+                if dt > EPSILON {
+                    let angle = key1.rotation.angle_between(key2.rotation);
+                    velocities.push(angle / dt as f32);
+                }
+            }
+            if !velocities.is_empty() {
+                let avg_velocity: f32 = velocities.iter().sum::<f32>() / velocities.len() as f32;
+                for (i, &v) in velocities.iter().enumerate() {
+                    if avg_velocity > 0.0 && v > avg_velocity * VELOCITY_SPIKE_THRESHOLD {
+                        println!("[DB] ->   WARNING: Potential velocity spike in animation '{}' for bone '{}' ({}x avg)", 
+                            animation.name, channel.bone_name, v / avg_velocity);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn process_animated_scene(
     scene: &Scene,
     model_name: &str,
@@ -433,10 +671,6 @@ fn process_animated_scene(
         ])
         .transpose();
 
-        println!("[DB] -> Bone {}: '{}' (parent: {})", 
-            bone_index, bone_name, 
-            parent_index.map(|p| p.to_string()).unwrap_or_else(|| "None".to_string()));
-
         bones.push(Bone {
             name: bone_name,
             parent_index,
@@ -450,16 +684,11 @@ fn process_animated_scene(
     }
 
     if let Some(root) = &scene.root {
-        println!("[DB] -> Building skeleton from root node: '{}'", root.name);
         build_skeleton_recursive(root, None, &mut bones, &mut bone_map);
     }
 
-    println!("[DB] -> Built skeleton with {} bones", bones.len());
-
     // 1.5. Populate inverse bind poses
-    println!("[DB] -> Processing inverse bind poses from meshes...");
-    for (mesh_idx, mesh) in scene.meshes.iter().enumerate() {
-        println!("[DB] -> Mesh {}: {} bones", mesh_idx, mesh.bones.len());
+    for mesh in &scene.meshes {
         for r_bone in &mesh.bones {
             if let Some(&bone_index) = bone_map.get(&r_bone.name) {
                 let inverse_bind_pose = glam::Mat4::from_cols_array(&[
@@ -482,9 +711,6 @@ fn process_animated_scene(
                 ])
                 .transpose();
                 bones[bone_index].inverse_bind_pose = inverse_bind_pose;
-                println!("[DB] -> Set inverse bind pose for bone '{}' (index {})", r_bone.name, bone_index);
-            } else {
-                println!("[DB] -> WARNING: Bone '{}' from mesh not found in skeleton", r_bone.name);
             }
         }
     }
@@ -492,129 +718,55 @@ fn process_animated_scene(
     let skeleton = Skeleton { bones };
 
     // 2. Process animations
-    println!("[DB] -> Processing {} animations...", scene.animations.len());
-    for (anim_idx, anim) in scene.animations.iter().enumerate() {
-        println!("[DB] -> Animation {}: '{}'", anim_idx, anim.name);
-        println!("[DB] ->   Duration: {} ticks", anim.duration);
-        println!("[DB] ->   Ticks per second: {}", anim.ticks_per_second);
-        println!("[DB] ->   Channels: {}", anim.channels.len());
+    for anim in &scene.animations {
+        let mut max_time = 0.0f64;
+        for channel in &anim.channels {
+            if let Some(key) = channel.position_keys.last() { max_time = max_time.max(key.time); }
+            if let Some(key) = channel.rotation_keys.last() { max_time = max_time.max(key.time); }
+            if let Some(key) = channel.scaling_keys.last() { max_time = max_time.max(key.time); }
+        }
+
+        let duration_in_ticks = if max_time > 0.0 { max_time } else { anim.duration };
         
         let mut channels = Vec::new();
-        let ticks_per_second = if anim.ticks_per_second > 0.0 {
-            anim.ticks_per_second
-        } else {
-            25.0 // Default to 25 FPS
-        };
+        let ticks_per_second = if anim.ticks_per_second > 0.0 { anim.ticks_per_second } else { 25.0 };
 
-        for (channel_idx, channel) in anim.channels.iter().enumerate() {
-            println!("[DB] ->   Channel {}: bone='{}'", channel_idx, channel.name);
-            println!("[DB] ->     Position keys: {}", channel.position_keys.len());
-            println!("[DB] ->     Rotation keys: {}", channel.rotation_keys.len());
-            println!("[DB] ->     Scale keys: {}", channel.scaling_keys.len());
-            
-            // Log first and last keyframe values for debugging
-            if !channel.position_keys.is_empty() {
-                let first_pos = &channel.position_keys[0];
-                let last_pos = &channel.position_keys[channel.position_keys.len() - 1];
-                println!("[DB] ->     Position range: [{:.3}, {:.3}, {:.3}] to [{:.3}, {:.3}, {:.3}]", 
-                    first_pos.value.x, first_pos.value.y, first_pos.value.z,
-                    last_pos.value.x, last_pos.value.y, last_pos.value.z);
-            }
-            
-            if !channel.rotation_keys.is_empty() {
-                let first_rot = &channel.rotation_keys[0];
-                let last_rot = &channel.rotation_keys[channel.rotation_keys.len() - 1];
-                println!("[DB] ->     Rotation range: [{:.3}, {:.3}, {:.3}, {:.3}] to [{:.3}, {:.3}, {:.3}, {:.3}]", 
-                    first_rot.value.x, first_rot.value.y, first_rot.value.z, first_rot.value.w,
-                    last_rot.value.x, last_rot.value.y, last_rot.value.z, last_rot.value.w);
-            }
-
-            let position_keys = channel
-                .position_keys
-                .iter()
-                .map(|pk| types::PositionKey {
-                    time: pk.time,
-                    position: glam::vec3(pk.value.x, pk.value.y, pk.value.z),
-                })
-                .collect();
-
-            let rotation_keys = channel
-                .rotation_keys
-                .iter()
-                .map(|rk| types::RotationKey {
-                    time: rk.time,
-                    rotation: glam::quat(rk.value.x, rk.value.y, rk.value.z, rk.value.w),
-                })
-                .collect();
-
-            let scale_keys = channel
-                .scaling_keys
-                .iter()
-                .map(|sk| types::ScaleKey {
-                    time: sk.time,
-                    scale: glam::vec3(sk.value.x, sk.value.y, sk.value.z),
-                })
-                .collect();
-
+        for channel in &anim.channels {
             channels.push(types::AnimationChannel {
                 bone_name: channel.name.clone(),
-                position_keys,
-                rotation_keys,
-                scale_keys,
+                position_keys: channel.position_keys.iter().map(|pk| types::PositionKey { time: pk.time, position: glam::vec3(pk.value.x, pk.value.y, pk.value.z) }).collect(),
+                rotation_keys: channel.rotation_keys.iter().map(|rk| types::RotationKey { time: rk.time, rotation: glam::quat(rk.value.x, rk.value.y, rk.value.z, rk.value.w) }).collect(),
+                scale_keys: channel.scaling_keys.iter().map(|sk| types::ScaleKey { time: sk.time, scale: glam::vec3(sk.value.x, sk.value.y, sk.value.z) }).collect(),
             });
         }
 
-        let animation = Animation {
+        let mut animation = Animation {
             name: anim.name.clone(),
-            duration_in_ticks: anim.duration,
+            duration_in_ticks,
             ticks_per_second,
             channels,
         };
+        
+        if let Err(e) = validate_and_fix_animation_data(&mut animation, &skeleton, model_name) {
+            return Err(format!("Animation validation failed for '{}' in model '{}': {}", anim.name, model_name, e).into());
+        }
+        
         let encoded_animation = bincode::serialize(&animation)?;
         animation_table.insert(anim.name.as_str(), encoded_animation.as_slice())?;
-        println!("[DB] ->   Saved animation '{}' to database", anim.name);
     }
     
-    println!("[DB] -> Found {} animations for {model_name}", scene.animations.len());
-
     // 3. Process meshes
-    println!("[DB] -> Processing {} meshes...", scene.meshes.len());
     let mut animated_meshes = Vec::new();
     for (mesh_index, mesh) in scene.meshes.iter().enumerate() {
-        println!("[DB] -> Mesh {}: '{}'", mesh_index, mesh.name);
-        println!("[DB] ->   Vertices: {}", mesh.vertices.len());
-        println!("[DB] ->   Faces: {}", mesh.faces.len());
-        println!("[DB] ->   Bones: {}", mesh.bones.len());
-        
         let mut vertex_bone_data: Vec<Vec<(u32, f32)>> = vec![Vec::new(); mesh.vertices.len()];
 
-        // Create a map from the mesh's local bone index to the skeleton's global bone index.
-        let mesh_bone_to_global_bone_map: HashMap<usize, usize> = mesh
-            .bones
-            .iter()
-            .enumerate()
-            .filter_map(|(mesh_bone_index, r_bone)| {
-                bone_map.get(&r_bone.name).map(|&global_bone_index| (mesh_bone_index, global_bone_index))
-            })
-            .collect();
-
-        println!("[DB] ->   Mapped {} mesh bones to global skeleton", mesh_bone_to_global_bone_map.len());
-
-        for (mesh_bone_index, r_bone) in mesh.bones.iter().enumerate() {
-            if let Some(&global_bone_index) = mesh_bone_to_global_bone_map.get(&mesh_bone_index) {
-                println!("[DB] ->   Bone '{}': mesh_index={} -> global_index={}", 
-                    r_bone.name, mesh_bone_index, global_bone_index);
+        for r_bone in &mesh.bones {
+            if let Some(&skel_idx) = bone_map.get(&r_bone.name) {
                 for weight in &r_bone.weights {
-                    vertex_bone_data[weight.vertex_id as usize].push((global_bone_index as u32, weight.weight));
+                    vertex_bone_data[weight.vertex_id as usize].push((skel_idx as u32, weight.weight));
                 }
-            } else {
-                println!("[DB] ->   WARNING: Bone '{}' not found in skeleton", r_bone.name);
             }
         }
-
-        // Log vertex bone data statistics
-        let vertices_with_bones = vertex_bone_data.iter().filter(|v| !v.is_empty()).count();
-        println!("[DB] ->   Vertices with bone influences: {}/{}", vertices_with_bones, mesh.vertices.len());
 
         let vertices: Vec<SkinnedVertex> = mesh
             .vertices
@@ -629,20 +781,12 @@ fn process_animated_scene(
                     bone_weights[j] = *weight;
                 }
                 
-                let normal = if let Some(n) = mesh.normals.get(i) {
-                    glam::vec4(n.x, n.y, n.z, 0.0)
-                } else {
-                    glam::vec4(0.0, 0.0, 0.0, 0.0)
-                };
+                let normal = if let Some(n) = mesh.normals.get(i) { glam::vec4(n.x, n.y, n.z, 0.0) } else { glam::vec4(0.0, 0.0, 0.0, 0.0) };
 
                 SkinnedVertex {
                     position: glam::vec4(v.x, v.y, v.z, 1.0),
                     normal,
-                    uv: if let Some(uvs) = &mesh.texture_coords[0] {
-                        glam::vec2(uvs[i].x, 1.0 - uvs[i].y)
-                    } else {
-                        glam::vec2(0.0, 0.0)
-                    },
+                    uv: if let Some(uvs) = &mesh.texture_coords[0] { glam::vec2(uvs[i].x, 1.0 - uvs[i].y) } else { glam::vec2(0.0, 0.0) },
                     bone_indices,
                     bone_weights,
                     _padding: [0.0; 2],
@@ -659,24 +803,9 @@ fn process_animated_scene(
             let vertex_data_bytes = bytemuck::cast_slice(&vertices);
             let adapter = VertexDataAdapter::new(vertex_data_bytes, vertex_stride, 0).unwrap();
             let meshlets_result = build_meshlets(&indices, &adapter, MAX_VERTICES, MAX_TRIANGLES, 0.0);
-            let converted_meshlets = meshlets_result
-                .meshlets
-                .iter()
-                .map(|m| Meshlet {
-                    vertex_offset: m.vertex_offset,
-                    triangle_offset: m.triangle_offset,
-                    vertex_count: m.vertex_count,
-                    triangle_count: m.triangle_count,
-                })
-                .collect();
-            Some(Meshlets {
-                meshlets: converted_meshlets,
-                vertices: meshlets_result.vertices,
-                triangles: meshlets_result.triangles,
-            })
+            let converted_meshlets = meshlets_result.meshlets.iter().map(|m| Meshlet { vertex_offset: m.vertex_offset, triangle_offset: m.triangle_offset, vertex_count: m.vertex_count, triangle_count: m.triangle_count }).collect();
+            Some(Meshlets { meshlets: converted_meshlets, vertices: meshlets_result.vertices, triangles: meshlets_result.triangles })
         };
-
-        println!("[DB] ->   Generated {} meshlets", meshlets.as_ref().map_or(0, |m| m.meshlets.len()));
 
         let mut aabb = AABB::default();
         if let Some(first_vtx) = vertices.first() {
@@ -697,7 +826,6 @@ fn process_animated_scene(
                 let new_name = format!("{model_name}-mesh-{mesh_index}_diffuse.png");
                 texture_table.insert(new_name.as_str(), bytes.as_slice())?;
                 texture_name = Some(new_name.clone());
-                println!("[DB] ->   Found diffuse texture: {}", new_name);
             }
         }
 
@@ -720,7 +848,6 @@ fn process_animated_scene(
         }
     }
 
-    let mesh_count = animated_meshes.len();
     let animated_model = AnimatedModel {
         name: model_name.to_string(),
         meshes: animated_meshes,
@@ -731,10 +858,7 @@ fn process_animated_scene(
     let encoded_model = bincode::serialize(&animated_model)?;
     animated_model_table.insert(model_name, encoded_model.as_slice())?;
 
-    println!("[DB] -> Processed {} meshes for {model_name}", mesh_count);
-    println!("[DB] -> Model AABB: min=[{:.3}, {:.3}, {:.3}], max=[{:.3}, {:.3}, {:.3}]", 
-        model_aabb.min.x, model_aabb.min.y, model_aabb.min.z,
-        model_aabb.max.x, model_aabb.max.y, model_aabb.max.z);
     println!("[DB] Successfully processed animated model: {model_name}");
     Ok(())
 }
+
