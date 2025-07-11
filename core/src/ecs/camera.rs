@@ -28,7 +28,14 @@ impl Default for Camera {
 
 impl Camera {
     pub fn projection_matrix(&self) -> Mat4 {
-        Mat4::perspective_rh(self.fovy, self.aspect, self.znear, self.zfar)
+        // Standard right-handed perspective matrix.
+        let projection = Mat4::perspective_rh(self.fovy, self.aspect, self.znear, self.zfar);
+
+        // Correction matrix to flip the Y-axis for wgpu's coordinate system.
+        let y_flip = Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0));
+
+        // Apply the correction to the projection matrix.
+        y_flip * projection
     }
 }
 
@@ -46,8 +53,8 @@ impl Default for OrbitCamera {
         Self {
             target: Vec3::ZERO,
             yaw: -std::f32::consts::FRAC_PI_2,
-            pitch: std::f32::consts::FRAC_PI_4,
-            distance: 10.0,
+            pitch: std::f32::consts::FRAC_PI_6, // Reduced pitch for a more downward view
+            distance: 15.0, // Increased distance to see more models
             pan: Vec3::ZERO,
         }
     }

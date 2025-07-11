@@ -8,7 +8,11 @@ use types::{Animation, PositionKey, RotationKey, ScaleKey};
 #[derive(Component)]
 pub struct AnimationPlayer {
     pub animation_name: String,
+    pub next_animation: Option<String>,
+    pub blend_factor: f32, // 0.0 = all current, 1.0 = all next
+    pub blend_duration: f32, // Duration of blend transition in seconds
     pub current_time: f64,
+    pub next_time: f64, // Time for the next animation during blending
     pub speed: f64,
     pub looping: bool,
     pub playing: bool,
@@ -18,7 +22,11 @@ impl Default for AnimationPlayer {
     fn default() -> Self {
         Self {
             animation_name: String::new(),
+            next_animation: None,
+            blend_factor: 0.0,
+            blend_duration: 0.3, // 300ms default blend duration
             current_time: 0.0,
+            next_time: 0.0,
             speed: 1.0,
             looping: true,
             playing: true,
@@ -47,73 +55,118 @@ pub fn animation_system(
         }
         println!("[Animation] Processing: {} transform: {:?}", player.animation_name, transform.translation());
 
-        if let Some(animation) = asset_server.animated_meshlet_manager.animations.get(&player.animation_name) {
-            // Update time
-            let old_time = player.current_time;
-            player.current_time += time.delta_seconds() * player.speed;
-            let duration_in_seconds = animation.duration_in_ticks as f64 / animation.ticks_per_second as f64;
-
-            if player.looping {
-                player.current_time %= duration_in_seconds;
-            } else if player.current_time > duration_in_seconds {
-                player.current_time = duration_in_seconds;
-                player.playing = false;
-            }
+        // Handle animation blending
+        let next_anim_name = player.next_animation.clone();
+        if let Some(next_anim_name) = &next_anim_name {
+            // Update blend factor
+            player.blend_factor += time.delta_seconds() as f32 / player.blend_duration;
             
-            let animation_time_in_ticks = player.current_time as f64 * animation.ticks_per_second;
-            let model_matrix = transform.compute_matrix(); // Get the entity's world transform matrix
-
-            println!("[Animation] -> Time: {:.3}s -> {:.3}s (duration: {:.3}s)", 
-                old_time, player.current_time, duration_in_seconds);
-            println!("[Animation] -> Animation time in ticks: {:.3}", animation_time_in_ticks);
-
-            if let Some(skeleton) = &asset_server.animated_meshlet_manager.skeletons.get(&instance.model_name) {
-                println!("[Animation] -> Skeleton has {} bones", skeleton.bones.len());
-                
-                // Calculate local pose for each bone
-                let local_poses: Vec<Mat4> = skeleton.bones.iter().map(|bone| {
-                    calculate_bone_transform(animation, &bone.name, animation_time_in_ticks, bone.transform)
-                }).collect();
-
-                // Calculate global pose for each bone
-                let mut global_poses = vec![Mat4::IDENTITY; skeleton.bones.len()];
-                for (i, bone) in skeleton.bones.iter().enumerate() {
-                    let parent_pose = bone.parent_index
-                        .map(|idx| global_poses[idx])
-                        .unwrap_or(Mat4::IDENTITY);
-                    global_poses[i] = parent_pose * local_poses[i];
-                    
-                    // Log bone transformation details for first few bones
-                    if i < 3 {
-                        let local_pos = local_poses[i].transform_point3(glam::Vec3::ZERO);
-                        let global_pos = global_poses[i].transform_point3(glam::Vec3::ZERO);
-                        println!("[Animation] -> Bone {} '{}': local_pos=[{:.3}, {:.3}, {:.3}], global_pos=[{:.3}, {:.3}, {:.3}]", 
-                            i, bone.name, local_pos.x, local_pos.y, local_pos.z, global_pos.x, global_pos.y, global_pos.z);
-                    }
-                }
-
-                // Calculate final skinning matrices with world transform applied
-                bone_matrices.matrices.resize(256, Mat4::IDENTITY);
-                for (i, bone) in skeleton.bones.iter().enumerate() {
-                    // The correct order for skinning matrices is:
-                    // world_transform * global_pose * inverse_bind_pose
-                    // This gives us the final bone matrix that transforms from bind pose to world space
-                    bone_matrices.matrices[i] = model_matrix * global_poses[i] * bone.inverse_bind_pose;
-                    
-                    // Log final bone matrix details for first few bones
-                    if i < 3 {
-                        let final_pos = bone_matrices.matrices[i].transform_point3(glam::Vec3::ZERO);
-                        println!("[Animation] -> Final bone {} '{}': world_pos=[{:.3}, {:.3}, {:.3}]", 
-                            i, bone.name, final_pos.x, final_pos.y, final_pos.z);
-                    }
-                }
-                
-                println!("[Animation] -> Updated {} bone matrices", skeleton.bones.len());
-            } else {
-                println!("[Animation] -> WARNING: No skeleton found for model '{}'", instance.model_name);
+            // Update next animation time
+            player.next_time += time.delta_seconds() * player.speed;
+            
+            // Check if blend is complete
+            if player.blend_factor >= 1.0 {
+                // Transition complete
+                player.animation_name = next_anim_name.clone();
+                player.current_time = player.next_time;
+                player.next_animation = None;
+                player.blend_factor = 0.0;
+                player.next_time = 0.0;
+                println!("[Animation] -> Blend complete, switched to '{}'", player.animation_name);
             }
+        }
+
+        // Get current animation
+        let current_animation = if let Some(anim) = asset_server.animated_meshlet_manager.animations.get(&player.animation_name) {
+            anim
         } else {
             println!("[Animation] -> WARNING: No animation found for '{}'", player.animation_name);
+            continue;
+        };
+
+        // Update current animation time
+        let old_time = player.current_time;
+        player.current_time += time.delta_seconds() * player.speed;
+        let duration_in_seconds = current_animation.duration_in_ticks as f64 / current_animation.ticks_per_second as f64;
+
+        if player.looping {
+            player.current_time %= duration_in_seconds;
+        } else if player.current_time > duration_in_seconds {
+            player.current_time = duration_in_seconds;
+            player.playing = false;
+        }
+        
+        let current_animation_time_in_ticks = player.current_time as f64 * current_animation.ticks_per_second;
+        let model_matrix = transform.compute_matrix();
+
+        println!("[Animation] -> Time: {:.3}s -> {:.3}s (duration: {:.3}s)", 
+            old_time, player.current_time, duration_in_seconds);
+        println!("[Animation] -> Animation time in ticks: {:.3}", current_animation_time_in_ticks);
+
+        if let Some(skeleton) = &asset_server.animated_meshlet_manager.skeletons.get(&instance.model_name) {
+            println!("[Animation] -> Skeleton has {} bones", skeleton.bones.len());
+            
+            // Calculate poses for current animation
+            let current_local_poses: Vec<Mat4> = skeleton.bones.iter().map(|bone| {
+                calculate_bone_transform(current_animation, &bone.name, current_animation_time_in_ticks, bone.transform)
+            }).collect();
+
+            // Calculate global poses for current animation
+            let mut current_global_poses = vec![Mat4::IDENTITY; skeleton.bones.len()];
+            for (i, bone) in skeleton.bones.iter().enumerate() {
+                let parent_pose = bone.parent_index
+                    .map(|idx| current_global_poses[idx])
+                    .unwrap_or(Mat4::IDENTITY);
+                current_global_poses[i] = parent_pose * current_local_poses[i];
+            }
+
+            // If blending, calculate poses for next animation
+            let mut final_global_poses = current_global_poses.clone();
+            let next_anim_name = player.next_animation.clone();
+            if let Some(next_anim_name) = &next_anim_name {
+                if let Some(next_animation) = asset_server.animated_meshlet_manager.animations.get(next_anim_name) {
+                    let next_duration_in_seconds = next_animation.duration_in_ticks as f64 / next_animation.ticks_per_second as f64;
+                    let next_animation_time_in_ticks = player.next_time as f64 * next_animation.ticks_per_second;
+
+                    // Calculate poses for next animation
+                    let next_local_poses: Vec<Mat4> = skeleton.bones.iter().map(|bone| {
+                        calculate_bone_transform(next_animation, &bone.name, next_animation_time_in_ticks, bone.transform)
+                    }).collect();
+
+                    // Calculate global poses for next animation
+                    let mut next_global_poses = vec![Mat4::IDENTITY; skeleton.bones.len()];
+                    for (i, bone) in skeleton.bones.iter().enumerate() {
+                        let parent_pose = bone.parent_index
+                            .map(|idx| next_global_poses[idx])
+                            .unwrap_or(Mat4::IDENTITY);
+                        next_global_poses[i] = parent_pose * next_local_poses[i];
+                    }
+
+                    // Blend between current and next poses
+                    for i in 0..skeleton.bones.len() {
+                        final_global_poses[i] = blend_poses(current_global_poses[i], next_global_poses[i], player.blend_factor);
+                    }
+
+                    println!("[Animation] -> Blending animations: factor={:.3}", player.blend_factor);
+                }
+            }
+
+            // Calculate final skinning matrices with world transform applied
+            bone_matrices.matrices.resize(256, Mat4::IDENTITY);
+            for (i, bone) in skeleton.bones.iter().enumerate() {
+                bone_matrices.matrices[i] = model_matrix * final_global_poses[i] * bone.inverse_bind_pose;
+                
+                // Log final bone matrix details for first few bones
+                if i < 3 {
+                    let final_pos = bone_matrices.matrices[i].transform_point3(glam::Vec3::ZERO);
+                    println!("[Animation] -> Final bone {} '{}': world_pos=[{:.3}, {:.3}, {:.3}]", 
+                        i, bone.name, final_pos.x, final_pos.y, final_pos.z);
+                }
+            }
+            
+            println!("[Animation] -> Updated {} bone matrices", skeleton.bones.len());
+        } else {
+            println!("[Animation] -> WARNING: No skeleton found for model '{}'", instance.model_name);
         }
     }
 }
@@ -405,4 +458,42 @@ fn find_interpolated_scale(time_in_ticks: f64, keys: &[ScaleKey]) -> Option<Vec3
     }
 
     Some(result)
+}
+
+/// Blend between two bone poses using linear interpolation for position/scale and spherical linear interpolation for rotation
+fn blend_poses(pose1: Mat4, pose2: Mat4, factor: f32) -> Mat4 {
+    // Decompose matrices into translation, rotation, and scale
+    let (pos1, rot1, scale1) = decompose_matrix(pose1);
+    let (pos2, rot2, scale2) = decompose_matrix(pose2);
+    
+    // Interpolate components
+    let blended_pos = pos1.lerp(pos2, factor);
+    let blended_rot = rot1.slerp(rot2, factor);
+    let blended_scale = scale1.lerp(scale2, factor);
+    
+    // Reconstruct matrix
+    Mat4::from_scale_rotation_translation(blended_scale, blended_rot, blended_pos)
+}
+
+/// Decompose a transformation matrix into translation, rotation, and scale
+fn decompose_matrix(matrix: Mat4) -> (Vec3, Quat, Vec3) {
+    // Extract translation
+    let translation = matrix.transform_point3(Vec3::ZERO);
+    
+    // Extract scale and rotation (simplified - assumes uniform scaling)
+    let scale_x = matrix.x_axis.length();
+    let scale_y = matrix.y_axis.length();
+    let scale_z = matrix.z_axis.length();
+    let scale = Vec3::new(scale_x, scale_y, scale_z);
+    
+    // Extract rotation (normalize the basis vectors)
+    let rotation_matrix = Mat4::from_cols(
+        matrix.x_axis.normalize(),
+        matrix.y_axis.normalize(),
+        matrix.z_axis.normalize(),
+        glam::Vec4::new(0.0, 0.0, 0.0, 1.0),
+    );
+    let rotation = Quat::from_mat4(&rotation_matrix);
+    
+    (translation, rotation, scale)
 }

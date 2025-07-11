@@ -93,6 +93,7 @@ pub fn ui_system(mut p: UiSystemParams) {
     // Add Animation Control Window
     egui::Window::new("Animation Control").show(ctx, |ui| {
         let mut animation_players: Vec<_> = p.animation_player_query.iter_mut().collect();
+        let available_animations: Vec<String> = p.asset_server.animated_meshlet_manager.animations.keys().cloned().collect();
         
         if animation_players.is_empty() {
             ui.label("No animated entities found.");
@@ -102,6 +103,27 @@ pub fn ui_system(mut p: UiSystemParams) {
             for (i, player) in animation_players.iter_mut().enumerate() {
                 ui.separator();
                 ui.label(format!("Entity {}: {}", i + 1, player.animation_name));
+                
+                // Animation selection dropdown
+                let current_anim_name = player.animation_name.clone();
+                egui::ComboBox::from_label(format!("Entity {} Animation", i + 1))
+                    .selected_text(&current_anim_name)
+                    .show_ui(ui, |ui| {
+                        for anim_name in &available_animations {
+                            if ui.selectable_value(&mut player.animation_name, anim_name.clone(), anim_name).changed() {
+                                player.current_time = 0.0; // Reset time on animation change
+                                player.next_animation = None; // Cancel any ongoing blend
+                                player.blend_factor = 0.0;
+                                println!("[UI] Changed animation for entity {} to '{}'", i + 1, anim_name);
+                            }
+                        }
+                    });
+                
+                // Blend duration slider
+                let mut blend_duration = player.blend_duration;
+                if ui.add(egui::Slider::new(&mut blend_duration, 0.1..=2.0).text("Blend Duration (s)")).changed() {
+                    player.blend_duration = blend_duration;
+                }
                 
                 // Animation speed slider
                 let mut speed = player.speed;
@@ -122,6 +144,27 @@ pub fn ui_system(mut p: UiSystemParams) {
                 
                 // Current time display
                 ui.label(format!("Current time: {:.2}s", player.current_time));
+                
+                // Blend status display
+                if player.next_animation.is_some() {
+                    ui.label(format!("Blending to: {} (factor: {:.2})", 
+                        player.next_animation.as_ref().unwrap(), player.blend_factor));
+                }
+                
+                // Quick animation transition buttons
+                ui.label("Quick Transitions:");
+                ui.horizontal(|ui| {
+                    for (j, anim_name) in available_animations.iter().take(3).enumerate() {
+                        if ui.button(format!("{}", j + 1)).clicked() {
+                            if anim_name != &player.animation_name {
+                                player.next_animation = Some(anim_name.clone());
+                                player.blend_factor = 0.0;
+                                player.next_time = 0.0;
+                                println!("[UI] Triggered blend to '{}' for entity {}", anim_name, i + 1);
+                            }
+                        }
+                    }
+                });
             }
         }
     });
