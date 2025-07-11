@@ -1016,6 +1016,7 @@ dependencies = [
  "bytemuck",
  "glam",
  "gltf",
+ "image",
  "meshopt",
  "redb",
  "russimp",
