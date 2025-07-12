@@ -3,6 +3,6 @@ members = [
     "core",
     "database",
     "types",
-    "tests",
+    "tests", "gpu_picking",
 ]
 resolver = "2" 

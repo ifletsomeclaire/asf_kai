@@ -1,0 +1,11 @@
+[package]
+name = "gpu_picking"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy_ecs = "0.16.1"
+bytemuck = { version = "1.23.1", features = ["derive"] }
+futures-channel = "0.3.31"
+
+wgpu = "25.0.2"
