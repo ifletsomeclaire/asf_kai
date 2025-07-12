@@ -2,6 +2,7 @@ use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use log;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CameraConfig {
@@ -63,18 +64,18 @@ impl Config {
         if let Some(path) = Self::config_path() {
             if let Some(parent) = path.parent() {
                 if let Err(e) = fs::create_dir_all(parent) {
-                    eprintln!("Failed to create config directory: {e}");
+                    log::error!("Failed to create config directory: {e}");
                     return;
                 }
             }
             match ron::to_string(self) {
                 Ok(ron_string) => {
                     if let Err(e) = fs::write(path, ron_string) {
-                        eprintln!("Failed to write config file: {e}");
+                        log::error!("Failed to write config file: {e}");
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to serialize config: {e}");
+                    log::error!("Failed to serialize config: {e}");
                 }
             }
         }

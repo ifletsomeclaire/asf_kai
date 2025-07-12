@@ -18,9 +18,9 @@ pub struct MeshletDescription {
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct DrawCommand {
     pub meshlet_id: u32,
-    pub transform_id: u32,
+    pub transform_id: u32,  // Still needed for static meshlets
+    pub entity_id: u32,     // Entity ID for picking
     pub texture_id: u32,
-    pub _padding: u32,
 }
 
 pub struct MeshletManager {
@@ -106,8 +106,8 @@ impl MeshletManager {
                         let draw_command = DrawCommand {
                             meshlet_id: (all_meshlets.len() - 1) as u32,
                             transform_id: transform_id as u32,
+                            entity_id: transform_id as u32, // Use transform_id as entity_id for static meshlets
                             texture_id,
-                            _padding: 0,
                         };
                         draw_commands.push(draw_command);
                     }

@@ -2,6 +2,7 @@ use bevy_derive::Deref;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParam;
 use eframe::egui;
+use log;
 
 use crate::{
     config::Config,
@@ -14,6 +15,7 @@ use crate::{
     },
     renderer::{assets::AssetServer, events::ResizeEvent},
 };
+use gpu_picking::GPUPicking;
 
 #[derive(Resource, Deref)]
 pub struct EguiCtx(pub egui::Context);
@@ -61,6 +63,8 @@ pub struct UiSystemParams<'w, 's> {
     commands: Commands<'w, 's>,
     asset_server: Res<'w, AssetServer>,
     // spawned_entities: ResMut<'w, SpawnedEntities>,
+    // --- For GPU Picking ---
+    gpu_picking: Res<'w, GPUPicking>,
 }
 
 pub fn ui_system(mut p: UiSystemParams) {
@@ -114,7 +118,7 @@ pub fn ui_system(mut p: UiSystemParams) {
                                 player.current_time = 0.0; // Reset time on animation change
                                 player.next_animation = None; // Cancel any ongoing blend
                                 player.blend_factor = 0.0;
-                                println!("[UI] Changed animation for entity {} to '{}'", i + 1, anim_name);
+                                log::info!("[UI] Changed animation for entity {} to '{}'", i + 1, anim_name);
                             }
                         }
                     });
@@ -160,7 +164,7 @@ pub fn ui_system(mut p: UiSystemParams) {
                                 player.next_animation = Some(anim_name.clone());
                                 player.blend_factor = 0.0;
                                 player.next_time = 0.0;
-                                println!("[UI] Triggered blend to '{}' for entity {}", anim_name, i + 1);
+                                log::info!("[UI] Triggered blend to '{}' for entity {}", anim_name, i + 1);
                             }
                         }
                     }
@@ -218,6 +222,48 @@ pub fn ui_system(mut p: UiSystemParams) {
         } else {
             ui.label("Camera not found.");
         }
+    });
+
+    // GPU Picking Window
+    egui::Window::new("GPU Picking").show(ctx, |ui| {
+        // Display current pick coordinates
+        if let Some(origin) = p.gpu_picking.selection_origin {
+            ui.label(format!("Pick Coordinates: ({}, {})", origin[0], origin[1]));
+        } else {
+            ui.label("No pick coordinates set");
+        }
+        
+        ui.separator();
+        
+        // Display last picking results
+        if let Some(results) = p.gpu_picking.get_last_result() {
+            ui.label(format!("Found {} entities at pick location:", results.len()));
+            
+            for (i, &entity_id) in results.iter().enumerate() {
+                ui.label(format!("  Entity {}: ID {}", i + 1, entity_id));
+            }
+        } else {
+            ui.label("No entities found at pick location");
+        }
+        
+        ui.separator();
+        
+        // Status information
+        ui.label("Status:");
+        if p.gpu_picking.is_picking_in_progress() {
+            ui.label("• Picking operation in progress...");
+        } else {
+            ui.label("• Ready for picking");
+        }
+        
+        ui.separator();
+        
+        // Instructions
+        ui.label("Instructions:");
+        ui.label("• Click in the 3D view to pick entities");
+        ui.label("• Selected entities will be highlighted");
+        ui.label("• Results are displayed above");
+        ui.label("• Check console for detailed picking logs");
     });
 
     egui::Window::new("Spawner").show(ctx, |_ui| {

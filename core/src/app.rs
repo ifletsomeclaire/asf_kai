@@ -7,6 +7,7 @@ use bevy_transform::{
 use eframe::egui::{self};
 use glam::Mat4;
 use std::sync::Arc;
+use log;
 
 use crate::{
     config::Config,
@@ -35,6 +36,43 @@ use crate::{
     },
 };
 
+// Component to mark selected entities
+#[derive(Component)]
+pub struct Selected;
+
+pub fn process_picking_results_system(
+    mut gpu_picking: ResMut<gpu_picking::GPUPicking>,
+    mut commands: Commands,
+    animated_instance_query: Query<(Entity, &AnimatedInstance)>,
+    static_meshlet_query: Query<Entity>,
+) {
+    gpu_picking.check_and_update_result();
+    
+    if let Some(entity_indices) = gpu_picking.get_last_result() {
+        log::info!("[GPU Picking] Found {} entities at pick location:", entity_indices.len());
+        
+        for &index in entity_indices {
+            let entity = Entity::from_raw(index);
+            
+            // Check if it's an animated instance
+            if let Ok((entity, instance)) = animated_instance_query.get(entity) {
+                log::info!("[GPU Picking] Selected animated entity {}: model='{}'", 
+                    entity.index(), instance.model_name);
+            } else {
+                // Check if it's a static meshlet (using transform_id as entity_id)
+                log::info!("[GPU Picking] Selected static meshlet entity {} (transform_id: {})", 
+                    entity.index(), index);
+            }
+            
+            // Handle selection - add component, highlight, etc.
+            commands.entity(entity).insert(Selected);
+        }
+        
+        // Clear the result after processing
+        gpu_picking.clear_result();
+    }
+}
+
 #[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
 struct Update;
 
@@ -51,7 +89,7 @@ pub struct Custom3d {
 
 impl Custom3d {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Option<Self> {
-        println!("--- Creating Custom3d ---");
+        log::info!("--- Creating Custom3d ---");
         let wgpu_render_state = cc.wgpu_render_state.as_ref()?;
         let config: Config = Default::default();
 
@@ -113,6 +151,11 @@ impl Custom3d {
         let tonemapping_pass = world.resource::<TonemappingPass>().clone();
         let tonemapping_bind_group = world.remove_resource::<TonemappingBindGroup>().unwrap();
 
+        // Create GPU picking system
+        let id_texture = world.resource::<crate::renderer::pipelines::tonemapping::IdTexture>();
+        let gpu_picking = gpu_picking::GPUPicking::new(&device, &id_texture.view);
+        world.insert_resource(gpu_picking);
+
         let wgpu_render_state = world.get_resource_mut::<WgpuRenderState>().unwrap();
 
         wgpu_render_state
@@ -157,28 +200,28 @@ impl Custom3d {
 
         // Debug: Print available animated models
         let asset_server = world.resource::<AssetServer>();
-        println!("[App] Available animated models:");
+        log::info!("[App] Available animated models:");
         for model_name in asset_server.animated_meshlet_manager.model_meshlets.keys() {
-            println!("  - {}", model_name);
+            log::info!("  - {}", model_name);
         }
 
         // Debug: Print available animations
-        println!("[App] Available animations:");
+        log::info!("[App] Available animations:");
         for anim_name in asset_server.animated_meshlet_manager.animations.keys() {
-            println!("  - {}", anim_name);
+            log::info!("  - {}", anim_name);
         }
 
         // Debug: Print skeleton information
-        println!("[App] Skeleton information:");
+        log::info!("[App] Skeleton information:");
         for (model_name, skeleton) in &asset_server.animated_meshlet_manager.skeletons {
-            println!("  Model '{}': {} bones", model_name, skeleton.bones.len());
+            log::info!("  Model '{}': {} bones", model_name, skeleton.bones.len());
             for (i, bone) in skeleton.bones.iter().take(3).enumerate() {
-                println!("    Bone {}: '{}' (parent: {})", 
+                log::info!("    Bone {}: '{}' (parent: {})", 
                     i, bone.name, 
                     bone.parent_index.map(|p| p.to_string()).unwrap_or_else(|| "None".to_string()));
             }
             if skeleton.bones.len() > 3 {
-                println!("    ... and {} more bones", skeleton.bones.len() - 3);
+                log::info!("    ... and {} more bones", skeleton.bones.len() - 3);
             }
         }
 
@@ -188,7 +231,7 @@ impl Custom3d {
             let mut transform = Transform::from_xyz(i as f32 * 3.0, 0.0, 0.0);
             transform.scale = glam::Vec3::splat(0.02); // Use smaller scale to prevent overlapping
 
-            println!("[App] Spawning instance {}: model='{}', animation='{}', transform={:?}", 
+            log::info!("[App] Spawning instance {}: model='{}', animation='{}', transform={:?}", 
                 i, model_name, anim_name, transform.translation);
 
             world.spawn((
@@ -207,7 +250,7 @@ impl Custom3d {
             ));
         }
 
-        println!("[App] Spawned {} animated test instances.", animations.len());
+        log::info!("[App] Spawned {} animated test instances.", animations.len());
 
 
         // --- Main Update Schedule ---
@@ -239,6 +282,8 @@ impl Custom3d {
                     .run_if(|ui_state: Res<UiState>| ui_state.render_static_meshlets),
                 render_d3_animated_pipeline_system
                     .run_if(|ui_state: Res<UiState>| ui_state.render_animated_meshlets),
+                gpu_picking_system,
+                process_picking_results_system,
             )
                 .chain(),
         );
@@ -255,5 +300,37 @@ impl eframe::App for Custom3d {
         self.world.insert_resource(Input(ctx.input(|i| i.clone())));
         self.schedule.run(&mut self.world);
         ctx.request_repaint();
+    }
+}
+
+pub fn gpu_picking_system(
+    device: Res<WgpuDevice>,
+    queue: Res<WgpuQueue>,
+    mut gpu_picking: ResMut<gpu_picking::GPUPicking>,
+    input: Res<Input>,
+    egui_ctx: Res<EguiCtx>,
+) {
+    // Only trigger picking if UI doesn't want pointer input
+    if egui_ctx.wants_pointer_input() {
+        return;
+    }
+
+    // Check for left mouse button click
+    if input.0.pointer.primary_pressed() {
+        // Get mouse position
+        if let Some(pos) = input.0.pointer.latest_pos() {
+            let x = pos.x.round() as u32;
+            let y = pos.y.round() as u32;
+            
+            print!("[GPU Picking] Mouse click at ({}, {})", x, y);
+            gpu_picking.set_pick_coordinates(x, y);
+            
+            // Encode pick commands and submit if needed
+            if let Some(pick_commands) = gpu_picking.encode_pick_commands(&device, &queue) {
+                queue.submit(std::iter::once(pick_commands));
+                gpu_picking.start_async_readback();
+                print!("[GPU Picking] Pick commands submitted");
+            }
+        }
     }
 }

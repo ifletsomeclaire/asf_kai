@@ -22,6 +22,10 @@ indexmap = { version = "2.2.6", features = ["serde"] }
 offset-allocator = "0.2.0"
 image = { version = "0.25.6", features = ["png"] }
 crossbeam-channel = "0.5.15"
+gpu_picking = { path = "../gpu_picking" }
+futures-channel = "0.3"
+log = "0.4"
+env_logger = "0.11"
 
 
 

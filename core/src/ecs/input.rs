@@ -1,6 +1,7 @@
 use bevy_derive::Deref;
 use bevy_ecs::prelude::*;
 use eframe::egui::{InputState, Key};
+use log;
 
 use crate::ecs::ui::EguiCtx;
 
@@ -13,6 +14,6 @@ pub fn keyboard_input_system(input: Res<Input>, egui_ctx: Res<EguiCtx>) {
     }
 
     if input.key_pressed(Key::Space) {
-        println!("Space was pressed!");
+        log::info!("Space was pressed!");
     }
 }

@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use redb::Database;
 use russimp::scene::{Scene, PostProcess};
 use types::{MODEL_TABLE, TEXTURE_TABLE, ANIMATED_MODEL_TABLE, ANIMATION_TABLE, Model};
+use log;
 
 pub struct ModelDatabase {
     db: Database,
@@ -88,7 +89,7 @@ impl ModelDatabase {
                             .and_then(|s| s.to_str())
                             .unwrap_or("unknown_model");
 
-                        println!("[DB] Processing model: {model_name} (using {})", 
+                        log::info!("[DB] Processing model: {model_name} (using {})", 
                             if use_gltf { "GLTF" } else { "russimp" });
 
                         if use_gltf {
@@ -130,7 +131,7 @@ impl ModelDatabase {
                         }
                     }
                     Some("png") => {
-                        println!("[DB] Processing texture: {file_name}");
+                        log::info!("[DB] Processing texture: {file_name}");
                         let texture_bytes = fs::read(path)?;
                         texture_table.insert(file_name, texture_bytes.as_slice())?;
                     }
@@ -161,16 +162,19 @@ impl ModelDatabase {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("Starting database populator");
+    // Initialize logger
+    env_logger::init();
+    
+    log::info!("Starting database populator");
 
     // Parse command line arguments
     let args: Vec<String> = env::args().collect();
     let use_gltf = args.iter().any(|arg| arg == "--gltf");
     
     if use_gltf {
-        println!("Using GLTF loader");
+        log::info!("Using GLTF loader");
     } else {
-        println!("Using russimp loader (default)");
+        log::info!("Using russimp loader (default)");
     }
 
     let mut workspace_root = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
@@ -181,31 +185,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let db = ModelDatabase::new(&db_path, use_gltf)?;
     db.populate_from_assets(&assets_path)?;
-    println!("Database populated successfully from {assets_path:?}");
+    log::info!("Database populated successfully from {assets_path:?}");
 
     // Example of retrieving a model
     if let Some(model) = db.get_model("cube")? {
-        println!(
+        log::info!(
             "Successfully retrieved model 'cube' with {} meshes.",
             model.meshes.len()
         );
         for mesh in &model.meshes {
-            println!("    - Mesh: {}", mesh.name);
-            println!("      - Vertices: {}", mesh.vertices.len());
-            println!("      - Indices: {}", mesh.indices.len());
+            log::info!("    - Mesh: {}", mesh.name);
+            log::info!("      - Vertices: {}", mesh.vertices.len());
+            log::info!("      - Indices: {}", mesh.indices.len());
             if let Some(meshlets) = &mesh.meshlets {
-                println!("      - Meshlets: {}", meshlets.meshlets.len());
+                log::info!("      - Meshlets: {}", meshlets.meshlets.len());
             }
             // Print first 3 vertices for inspection
             for (j, v) in mesh.vertices.iter().take(3).enumerate() {
-                println!(
+                log::info!(
                     "      - Vertex {}: [{}, {}, {}]",
                     j, v.position.x, v.position.y, v.position.z
                 );
             }
         }
     } else {
-        eprintln!("Could not retrieve model 'cube'");
+        log::error!("Could not retrieve model 'cube'");
     }
 
     Ok(())

@@ -21,6 +21,12 @@ pub struct HdrTexture {
 }
 
 #[derive(Resource)]
+pub struct IdTexture {
+    pub texture: wgpu::Texture,
+    pub view: wgpu::TextureView,
+}
+
+#[derive(Resource)]
 pub struct DepthTexture {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
@@ -65,6 +71,7 @@ pub fn resize_hdr_texture_system(
     wgpu_render_state: Res<WgpuRenderState>,
     hdr_texture: ResMut<HdrTexture>,
     mut depth_texture: ResMut<DepthTexture>,
+    mut id_texture: ResMut<IdTexture>,
 ) {
     for event in resize_events.read() {
         if event.0.width == 0 || event.0.height == 0 {
@@ -109,6 +116,22 @@ pub fn resize_hdr_texture_system(
         });
         depth_texture.texture = depth_texture_inner;
         depth_texture.view = depth_texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        // Create new ID texture
+        let id_texture_inner = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("id_texture"),
+            size: new_size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R32Uint,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[wgpu::TextureFormat::R32Uint],
+        });
+        id_texture.texture = id_texture_inner;
+        id_texture.view = id_texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -188,6 +211,24 @@ pub fn setup_tonemapping_pass_system(
     commands.insert_resource(DepthTexture {
         texture: depth_texture,
         view: depth_view,
+    });
+
+    // Create ID texture for GPU picking
+    let id_texture_desc = wgpu::TextureDescriptor {
+        label: Some("id_texture"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::R32Uint,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[wgpu::TextureFormat::R32Uint],
+    };
+    let id_texture = device.create_texture(&id_texture_desc);
+    let id_view = id_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    commands.insert_resource(IdTexture {
+        texture: id_texture,
+        view: id_view,
     });
 
     let tonemap_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {

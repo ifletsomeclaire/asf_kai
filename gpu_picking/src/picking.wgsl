@@ -56,7 +56,7 @@ fn main() {
     results[0] = 0u;
     
     // Sample the ID texture at the pick coordinates
-    let id = textureLoad(id_texture, vec2<i32>(pick_coords));
+    let id = textureLoad(id_texture, vec2<i32>(pick_coords), 0);
     
     // If we got a valid ID (non-zero), add it to results
     if (id.x != 0u) {

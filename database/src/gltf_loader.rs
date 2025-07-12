@@ -9,24 +9,25 @@ use types::{
     AnimatedMesh, AnimatedModel, Animation, AnimationChannel, Bone, Mesh, Meshlet, Meshlets,
     Model, PositionKey, RotationKey, ScaleKey, Skeleton, SkinnedVertex, Vertex, AABB,
 };
+use log;
 
 pub fn load_gltf_model<P: AsRef<Path>>(
     path: P,
     model_name: &str,
     skip_validation: bool,
 ) -> Result<(Option<Model>, Option<AnimatedModel>, Vec<Animation>, Vec<(String, Vec<u8>)>), Box<dyn std::error::Error>> {
-    println!("[GLTF] Loading model: {} from {:?}", model_name, path.as_ref());
+    log::info!("[GLTF] Loading model: {} from {:?}", model_name, path.as_ref());
 
     let (document, buffers, images) = gltf::import(path)?;
 
     // Debug information
-    println!("[GLTF] Document info:");
-    println!("  - Scenes: {}", document.scenes().count());
-    println!("  - Nodes: {}", document.nodes().count());
-    println!("  - Meshes: {}", document.meshes().count());
-    println!("  - Animations: {}", document.animations().count());
-    println!("  - Skins: {}", document.skins().count());
-    println!("  - Images: {}", images.len());
+    log::info!("[GLTF] Document info:");
+    log::info!("  - Scenes: {}", document.scenes().count());
+    log::info!("  - Nodes: {}", document.nodes().count());
+    log::info!("  - Meshes: {}", document.meshes().count());
+    log::info!("  - Animations: {}", document.animations().count());
+    log::info!("  - Skins: {}", document.skins().count());
+    log::info!("  - Images: {}", images.len());
 
     // Check if this is an animated model
     let has_animations = !document.animations().collect::<Vec<_>>().is_empty();
@@ -37,7 +38,7 @@ pub fn load_gltf_model<P: AsRef<Path>>(
     // Process textures from the imported images
     for (idx, image) in images.iter().enumerate() {
         let texture_name = format!("{}_texture_{}.png", model_name, idx);
-        println!("[GLTF] Processing texture {}: {}x{}, format: {:?}",
+        log::info!("[GLTF] Processing texture {}: {}x{}, format: {:?}",
                  idx, image.width, image.height, image.format);
 
         // Convert to PNG using the image crate
@@ -87,7 +88,7 @@ pub fn load_gltf_model<P: AsRef<Path>>(
                 png_data
             },
             _ => {
-                println!("[GLTF] Skipping unsupported image format: {:?}", image.format);
+                log::warn!("[GLTF] Skipping unsupported image format: {:?}", image.format);
                 continue;
             }
         };
@@ -96,7 +97,7 @@ pub fn load_gltf_model<P: AsRef<Path>>(
     }
 
     if has_animations || has_skins {
-        println!("[GLTF] Processing as animated model");
+        log::info!("[GLTF] Processing as animated model");
         // Process as animated model
         let (animated_model, animations) = process_animated_gltf(
             &document,
@@ -108,7 +109,7 @@ pub fn load_gltf_model<P: AsRef<Path>>(
         )?;
         Ok((None, Some(animated_model), animations, textures_to_add))
     } else {
-        println!("[GLTF] Processing as static model");
+        log::info!("[GLTF] Processing as static model");
         // Process as static model
         let model = process_static_gltf(
             &document,
@@ -133,7 +134,7 @@ fn process_static_gltf(
 
     // If there's a default scene, use it. Otherwise use the first scene, or process all nodes
     if let Some(scene) = document.default_scene().or_else(|| document.scenes().next()) {
-        println!("[GLTF] Processing scene: {:?}", scene.name());
+        log::info!("[GLTF] Processing scene: {:?}", scene.name());
         for node in scene.nodes() {
             process_static_node(
                 &node,
@@ -148,7 +149,7 @@ fn process_static_gltf(
         }
     } else {
         // No scenes, process all root nodes
-        println!("[GLTF] No scenes found, processing all root nodes");
+        log::info!("[GLTF] No scenes found, processing all root nodes");
         for node in document.nodes() {
             // Only process nodes that don't have parents (root nodes)
             let has_parent = document.nodes().any(|n| n.children().any(|c| c.index() == node.index()));
@@ -169,7 +170,7 @@ fn process_static_gltf(
 
     // If no meshes were found through node traversal, try processing meshes directly
     if meshes.is_empty() {
-        println!("[GLTF] No meshes found through node traversal, processing meshes directly");
+        log::info!("[GLTF] No meshes found through node traversal, processing meshes directly");
         for mesh in document.meshes() {
             for primitive in mesh.primitives() {
                 let unique_mesh_name = format!("{}-mesh-{}", model_name, mesh_counter);
@@ -188,7 +189,7 @@ fn process_static_gltf(
         }
     }
 
-    println!("[GLTF] Processed {} meshes", meshes.len());
+    log::info!("[GLTF] Processed {} meshes", meshes.len());
 
     // Calculate model AABB
     let mut model_aabb = AABB::default();
@@ -221,7 +222,7 @@ fn process_static_node(
     let accumulated_transform = *parent_transform * node_transform;
 
     if let Some(mesh) = node.mesh() {
-        println!("[GLTF] Processing mesh at node: {:?}", node.name());
+        log::info!("[GLTF] Processing mesh at node: {:?}", node.name());
         for primitive in mesh.primitives() {
             let unique_mesh_name = format!("{}-mesh-{}", model_name, *mesh_counter);
             *mesh_counter += 1;
@@ -278,13 +279,13 @@ fn process_primitive(
     let normals: Vec<[f32; 3]> = if let Some(normals_iter) = reader.read_normals() {
         normals_iter.collect()
     } else {
-        println!("[GLTF]    - No normals found, generating default normals");
+        log::warn!("[GLTF]    - No normals found, generating default normals");
         vec![[0.0, 0.0, 1.0]; positions.len()]
     };
     let uvs: Vec<[f32; 2]> = if let Some(tex_coords) = reader.read_tex_coords(0) {
         tex_coords.into_f32().collect()
     } else {
-        println!("[GLTF]    - No texture coordinates found, using defaults");
+        log::warn!("[GLTF]    - No texture coordinates found, using defaults");
         vec![[0.0, 0.0]; positions.len()]
     };
 
@@ -292,11 +293,11 @@ fn process_primitive(
     let indices: Vec<u32> = if let Some(indices_reader) = reader.read_indices() {
         indices_reader.into_u32().collect()
     } else {
-        println!("[GLTF]    - No indices found, generating triangle list");
+        log::warn!("[GLTF]    - No indices found, generating triangle list");
         (0..positions.len() as u32).collect()
     };
 
-    println!("[GLTF]    - Primitive has {} indices ({} triangles)",
+    log::info!("[GLTF]    - Primitive has {} indices ({} triangles)",
              indices.len(), indices.len() / 3);
 
     // Build deduplicated vertex buffer using indices
@@ -341,7 +342,7 @@ fn process_primitive(
         }
     }
 
-    println!("[GLTF]    - AABB: min=[{:.2}, {:.2}, {:.2}], max=[{:.2}, {:.2}, {:.2}]",
+    log::info!("[GLTF]    - AABB: min=[{:.2}, {:.2}, {:.2}], max=[{:.2}, {:.2}, {:.2}]",
              aabb.min.x, aabb.min.y, aabb.min.z,
              aabb.max.x, aabb.max.y, aabb.max.z);
 
@@ -367,7 +368,7 @@ fn process_animated_gltf(
     let skin = document.skins().next()
         .ok_or("Animated model has no skin")?;
 
-    println!("[GLTF] Building skeleton from skin: {:?}", skin.name());
+    log::info!("[GLTF] Building skeleton from skin: {:?}", skin.name());
 
     let mut bones = Vec::new();
     let mut bone_map = HashMap::new();
@@ -383,7 +384,7 @@ fn process_animated_gltf(
 
     // First pass: collect all joints and create bone entries
     let joints: Vec<_> = skin.joints().collect();
-    println!("[GLTF] Skeleton has {} joints", joints.len());
+    log::info!("[GLTF] Skeleton has {} joints", joints.len());
 
     for (idx, joint) in joints.iter().enumerate() {
         let bone_name = joint.name().unwrap_or(&format!("Bone_{}", idx)).to_string();
@@ -400,7 +401,7 @@ fn process_animated_gltf(
                 .unwrap_or(Mat4::IDENTITY),
         });
 
-        println!("[GLTF]    - Joint {}: {}", idx, bone_name);
+        log::info!("[GLTF]    - Joint {}: {}", idx, bone_name);
     }
 
     // Second pass: establish parent relationships
@@ -409,7 +410,7 @@ fn process_animated_gltf(
         for (potential_parent_idx, potential_parent) in joints.iter().enumerate() {
             if potential_parent.children().any(|child| child.index() == joint.index()) {
                 bones[idx].parent_index = Some(potential_parent_idx);
-                println!("[GLTF]        - Bone {} parent is {}", idx, potential_parent_idx);
+                log::info!("[GLTF]        - Bone {} parent is {}", idx, potential_parent_idx);
                 break;
             }
         }
@@ -423,7 +424,7 @@ fn process_animated_gltf(
 
     // Process meshes from scenes
     if let Some(scene) = document.default_scene().or_else(|| document.scenes().next()) {
-        println!("[GLTF] Processing animated meshes from scene: {:?}", scene.name());
+        log::info!("[GLTF] Processing animated meshes from scene: {:?}", scene.name());
         for node in scene.nodes() {
             process_animated_node(
                 &node,
@@ -440,7 +441,7 @@ fn process_animated_gltf(
 
     // If no meshes found, try processing all skinned meshes directly
     if animated_meshes.is_empty() {
-        println!("[GLTF] No meshes found through scene traversal, checking all nodes with meshes");
+        log::info!("[GLTF] No meshes found through scene traversal, checking all nodes with meshes");
         for node in document.nodes() {
             if node.mesh().is_some() {
                 process_animated_node(
@@ -457,12 +458,12 @@ fn process_animated_gltf(
         }
     }
 
-    println!("[GLTF] Processed {} animated meshes", animated_meshes.len());
+    log::info!("[GLTF] Processed {} animated meshes", animated_meshes.len());
 
     // Process animations
     let mut animations = Vec::new();
     for (anim_idx, anim) in document.animations().enumerate() {
-        println!("[GLTF] Processing animation {}: {:?}", anim_idx, anim.name());
+        log::info!("[GLTF] Processing animation {}: {:?}", anim_idx, anim.name());
         let animation = process_gltf_animation(&anim, buffers, &skeleton, &node_to_bone)?;
         animations.push(animation);
     }
@@ -510,7 +511,7 @@ fn process_animated_node(
     // We still need to traverse children, however.
     
     if let Some(mesh) = node.mesh() {
-        println!("[GLTF] Processing animated mesh at node: {:?}", node.name());
+        log::info!("[GLTF] Processing animated mesh at node: {:?}", node.name());
         for primitive in mesh.primitives() {
             let unique_mesh_name = format!("{}-mesh-{}", model_name, *mesh_counter);
             *mesh_counter += 1;
@@ -528,19 +529,19 @@ fn process_animated_node(
                 .ok_or("Mesh has no positions")?
                 .collect();
 
-            println!("[GLTF]    - Primitive has {} vertices", positions.len());
+            log::info!("[GLTF]    - Primitive has {} vertices", positions.len());
 
             let normals: Vec<[f32; 3]> = if let Some(normals_iter) = reader.read_normals() {
                 normals_iter.collect()
             } else {
-                println!("[GLTF]    - No normals found, generating defaults");
+                log::warn!("[GLTF]    - No normals found, generating defaults");
                 vec![[0.0, 0.0, 1.0]; positions.len()]
             };
 
             let uvs: Vec<[f32; 2]> = if let Some(tex_coords) = reader.read_tex_coords(0) {
                 tex_coords.into_f32().collect()
             } else {
-                println!("[GLTF]    - No UVs found, using defaults");
+                log::warn!("[GLTF]    - No UVs found, using defaults");
                 vec![[0.0, 0.0]; positions.len()]
             };
 
@@ -548,14 +549,14 @@ fn process_animated_node(
             let joints: Vec<[u16; 4]> = if let Some(joints_iter) = reader.read_joints(0) {
                 joints_iter.into_u16().collect()
             } else {
-                println!("[GLTF]    - No joint data found, using defaults");
+                log::warn!("[GLTF]    - No joint data found, using defaults");
                 vec![[0, 0, 0, 0]; positions.len()]
             };
 
             let weights: Vec<[f32; 4]> = if let Some(weights_iter) = reader.read_weights(0) {
                 weights_iter.into_f32().collect()
             } else {
-                println!("[GLTF]    - No weight data found, using defaults");
+                log::warn!("[GLTF]    - No weight data found, using defaults");
                 vec![[1.0, 0.0, 0.0, 0.0]; positions.len()]
             };
 
@@ -565,7 +566,7 @@ fn process_animated_node(
             } else {
                 (0..positions.len() as u32).collect()
             };
-            println!("[GLTF]    - Primitive has {} indices", indices.len());
+            log::info!("[GLTF]    - Primitive has {} indices", indices.len());
 
             // Build deduplicated vertex buffer using indices
             // Quantize weights to [u16; 4] for hashing
@@ -683,7 +684,7 @@ fn process_gltf_animation(
     // Group channels by target node
     let mut channel_map: HashMap<String, AnimationChannel> = HashMap::new();
 
-    println!("[GLTF]    - Animation has {} channels", animation.channels().count());
+    log::info!("[GLTF]    - Animation has {} channels", animation.channels().count());
 
     for channel in animation.channels() {
         let target_node = channel.target().node();
@@ -700,7 +701,7 @@ fn process_gltf_animation(
             if skeleton.bones.iter().any(|b| b.name == node_name_owned) {
                 node_name_owned
             } else {
-                println!("[GLTF]        - Skipping channel for non-bone node: {}", node_name_owned);
+                log::warn!("[GLTF]        - Skipping channel for non-bone node: {}", node_name_owned);
                 continue;
             }
         };
@@ -723,7 +724,7 @@ fn process_gltf_animation(
         match reader.read_outputs() {
             Some(gltf::animation::util::ReadOutputs::Translations(translations)) => {
                 let positions: Vec<[f32; 3]> = translations.collect();
-                println!("[GLTF]        - Translation channel: {} keyframes", positions.len());
+                log::info!("[GLTF]        - Translation channel: {} keyframes", positions.len());
                 for (time, pos) in times.iter().zip(positions.iter()) {
                     entry.position_keys.push(PositionKey {
                         time: *time as f64,
@@ -734,7 +735,7 @@ fn process_gltf_animation(
             }
             Some(gltf::animation::util::ReadOutputs::Rotations(rotations)) => {
                 let quats: Vec<[f32; 4]> = rotations.into_f32().collect();
-                println!("[GLTF]        - Rotation channel: {} keyframes", quats.len());
+                log::info!("[GLTF]        - Rotation channel: {} keyframes", quats.len());
                 for (time, quat) in times.iter().zip(quats.iter()) {
                     // GLTF quaternions are [x, y, z, w]
                     let rotation = Quat::from_xyzw(quat[0], quat[1], quat[2], quat[3]).normalize();
@@ -747,7 +748,7 @@ fn process_gltf_animation(
             }
             Some(gltf::animation::util::ReadOutputs::Scales(scales)) => {
                 let scales: Vec<[f32; 3]> = scales.collect();
-                println!("[GLTF]        - Scale channel: {} keyframes", scales.len());
+                log::info!("[GLTF]        - Scale channel: {} keyframes", scales.len());
                 for (time, scale) in times.iter().zip(scales.iter()) {
                     entry.scale_keys.push(ScaleKey {
                         time: *time as f64,
@@ -757,13 +758,13 @@ fn process_gltf_animation(
                 }
             }
             _ => {
-                println!("[GLTF]        - Unknown channel type");
+                log::warn!("[GLTF]        - Unknown channel type");
             }
         }
     }
 
     channels = channel_map.into_values().collect();
-    println!("[GLTF]    - Processed {} bone channels, duration: {:.2}s", channels.len(), max_time);
+    log::info!("[GLTF]    - Processed {} bone channels, duration: {:.2}s", channels.len(), max_time);
 
     Ok(Animation {
         name,
@@ -791,11 +792,11 @@ fn build_meshlets_for_vertices(
     let meshlets_result = build_meshlets(indices, &adapter, MAX_VERTICES, MAX_TRIANGLES, 0.0);
 
     if meshlets_result.meshlets.is_empty() {
-        println!("[GLTF]    - No meshlets generated for static mesh");
+        log::warn!("[GLTF]    - No meshlets generated for static mesh");
         return Ok(None);
     }
 
-    println!("[GLTF]    - Generated {} meshlets for static mesh", meshlets_result.meshlets.len());
+    log::info!("[GLTF]    - Generated {} meshlets for static mesh", meshlets_result.meshlets.len());
 
     let converted_meshlets = meshlets_result
         .meshlets
@@ -830,7 +831,7 @@ fn build_meshlets_for_skinned_vertices(
     let adapter = VertexDataAdapter::new(vertex_data_bytes, vertex_stride, 0).unwrap();
     let meshlets_result = build_meshlets(indices, &adapter, MAX_VERTICES, MAX_TRIANGLES, 0.0);
 
-    println!("[GLTF]    - Generated {} meshlets for animated mesh", meshlets_result.meshlets.len());
+    log::info!("[GLTF]    - Generated {} meshlets for animated mesh", meshlets_result.meshlets.len());
 
     let converted_meshlets = meshlets_result
         .meshlets

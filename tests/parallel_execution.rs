@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::*;
 use std::thread;
 use std::time::{Duration, Instant};
+use log;
 
 #[derive(Resource, Default)]
 struct ResourceA(u32);
@@ -20,6 +21,9 @@ fn system_b(mut res_b: ResMut<ResourceB>) {
 
 #[test]
 fn test_parallel_execution() {
+    // Initialize logger for tests
+    let _ = env_logger::try_init();
+    
     let mut world = World::default();
     world.init_resource::<ResourceA>();
     world.init_resource::<ResourceB>();
@@ -31,7 +35,7 @@ fn test_parallel_execution() {
     schedule.run(&mut world);
     let elapsed = start_time.elapsed();
 
-    println!("Parallel execution time: {:?}", elapsed);
+    log::info!("Parallel execution time: {:?}", elapsed);
 
     // If the systems ran in parallel, the total time should be slightly over 100ms.
     // If they ran sequentially, it would be over 200ms.
@@ -58,6 +62,9 @@ fn sequential_system_b(mut res_a: ResMut<ResourceA>) {
 
 #[test]
 fn test_sequential_execution() {
+    // Initialize logger for tests
+    let _ = env_logger::try_init();
+    
     let mut world = World::default();
     world.init_resource::<ResourceA>();
 
@@ -69,7 +76,7 @@ fn test_sequential_execution() {
     schedule.run(&mut world);
     let elapsed = start_time.elapsed();
 
-    println!("Sequential execution time: {:?}", elapsed);
+    log::info!("Sequential execution time: {:?}", elapsed);
 
     // If the systems ran sequentially, the total time should be over 200ms.
     assert!(elapsed > Duration::from_millis(200));

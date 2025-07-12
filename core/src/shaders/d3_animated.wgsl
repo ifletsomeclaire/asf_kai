@@ -20,7 +20,8 @@ struct MeshletDescription {
 struct AnimatedDrawCommand {
     meshlet_id: u32,
     bone_set_id: u32, // An index pointing to the start of a block of 256 matrices
-    transform_id: u32,
+    transform_id: u32, // Transform ID for positioning
+    entity_id: u32,    // Entity ID for picking
     texture_id: u32,
 };
 
@@ -30,7 +31,14 @@ struct VSOutput {
     @location(0) world_normal: vec3<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) @interpolate(flat) texture_id: u32,
+    @location(3) @interpolate(flat) entity_id: u32,
 };
+
+//-- Fragment Output for MRT ---------------------------------------------------
+struct FragmentOutput {
+    @location(0) color: vec4<f32>,
+    @location(1) entity_id: vec4<u32>,
+}
 
 //-- Bindings ------------------------------------------------------------------
 
@@ -146,6 +154,7 @@ fn vs_main(
     
     output.uv = vertex.uv;
     output.texture_id = command.texture_id;
+    output.entity_id = command.entity_id;
 
     return output;
 }
@@ -153,11 +162,15 @@ fn vs_main(
 //-- Fragment Shader -----------------------------------------------------------
 
 @fragment
-fn fs_main(in: VSOutput) -> @location(0) vec4<f32> {
+fn fs_main(in: VSOutput) -> FragmentOutput {
     let base_color = textureSample(texture_array, texture_sampler, in.uv, in.texture_id);
     // Basic lighting
     let light_dir = normalize(vec3<f32>(0.5, 1.0, 0.5));
     let diffuse_light = max(dot(in.world_normal, light_dir), 0.1) + 0.1; // Adding ambient term
     let final_color = base_color.rgb * diffuse_light;
-    return vec4<f32>(final_color, 1.0);
+    
+    var output: FragmentOutput;
+    output.color = vec4<f32>(final_color, 1.0);
+    output.entity_id = vec4<u32>(in.entity_id, 0u, 0u, 0u);
+    return output;
 }

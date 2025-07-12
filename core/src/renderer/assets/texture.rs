@@ -1,5 +1,6 @@
 use redb::{ReadOnlyTable, ReadableTable};
 use std::collections::HashMap;
+use log;
 
 pub struct TextureManager {
     pub texture_cpu_data: Vec<image::DynamicImage>,
@@ -24,7 +25,7 @@ pub fn load_textures_from_db(
     for result in texture_table.iter().unwrap() {
         let (name_bytes, texture_data) = result.unwrap();
         let name = name_bytes.value();
-        println!("[Asset Loading] Loading texture: {name}");
+        log::info!("[Asset Loading] Loading texture: {name}");
         if let Ok(image) = image::load_from_memory(texture_data.value()) {
             texture_map.insert(name.to_string(), texture_cpu_data.len() as u32);
             texture_cpu_data.push(image);

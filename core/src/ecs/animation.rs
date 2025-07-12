@@ -4,6 +4,7 @@ use glam::{Mat4, Quat, Vec3};
 use crate::ecs::time::Time;
 use crate::renderer::assets::AssetServer;
 use types::{Animation, PositionKey, RotationKey, ScaleKey};
+use log;
 
 #[derive(Component)]
 pub struct AnimationPlayer {
@@ -53,7 +54,7 @@ pub fn animation_system(
         if !player.playing {
             continue;
         }
-        println!("[Animation] Processing: {} transform: {:?}", player.animation_name, transform.translation());
+        log::debug!("[Animation] Processing: {} transform: {:?}", player.animation_name, transform.translation());
 
         // Handle animation blending
         let next_anim_name = player.next_animation.clone();
@@ -72,7 +73,7 @@ pub fn animation_system(
                 player.next_animation = None;
                 player.blend_factor = 0.0;
                 player.next_time = 0.0;
-                println!("[Animation] -> Blend complete, switched to '{}'", player.animation_name);
+                log::info!("[Animation] -> Blend complete, switched to '{}'", player.animation_name);
             }
         }
 
@@ -80,7 +81,7 @@ pub fn animation_system(
         let current_animation = if let Some(anim) = asset_server.animated_meshlet_manager.animations.get(&player.animation_name) {
             anim
         } else {
-            println!("[Animation] -> WARNING: No animation found for '{}'", player.animation_name);
+            log::warn!("[Animation] -> WARNING: No animation found for '{}'", player.animation_name);
             continue;
         };
 
@@ -99,12 +100,12 @@ pub fn animation_system(
         let current_animation_time_in_ticks = player.current_time as f64 * current_animation.ticks_per_second;
         let model_matrix = transform.compute_matrix();
 
-        println!("[Animation] -> Time: {:.3}s -> {:.3}s (duration: {:.3}s)", 
+        log::debug!("[Animation] -> Time: {:.3}s -> {:.3}s (duration: {:.3}s)", 
             old_time, player.current_time, duration_in_seconds);
-        println!("[Animation] -> Animation time in ticks: {:.3}", current_animation_time_in_ticks);
+        log::debug!("[Animation] -> Animation time in ticks: {:.3}", current_animation_time_in_ticks);
 
         if let Some(skeleton) = &asset_server.animated_meshlet_manager.skeletons.get(&instance.model_name) {
-            println!("[Animation] -> Skeleton has {} bones", skeleton.bones.len());
+            log::debug!("[Animation] -> Skeleton has {} bones", skeleton.bones.len());
             
             // Calculate poses for current animation
             let current_local_poses: Vec<Mat4> = skeleton.bones.iter().map(|bone| {
@@ -147,7 +148,7 @@ pub fn animation_system(
                         final_global_poses[i] = blend_poses(current_global_poses[i], next_global_poses[i], player.blend_factor);
                     }
 
-                    println!("[Animation] -> Blending animations: factor={:.3}", player.blend_factor);
+                    log::debug!("[Animation] -> Blending animations: factor={:.3}", player.blend_factor);
                 }
             }
 
@@ -159,14 +160,14 @@ pub fn animation_system(
                 // Log final bone matrix details for first few bones
                 if i < 3 {
                     let final_pos = bone_matrices.matrices[i].transform_point3(glam::Vec3::ZERO);
-                    println!("[Animation] -> Final bone {} '{}': world_pos=[{:.3}, {:.3}, {:.3}]", 
+                    log::debug!("[Animation] -> Final bone {} '{}': world_pos=[{:.3}, {:.3}, {:.3}]", 
                         i, bone.name, final_pos.x, final_pos.y, final_pos.z);
                 }
             }
             
-            println!("[Animation] -> Updated {} bone matrices", skeleton.bones.len());
+            log::debug!("[Animation] -> Updated {} bone matrices", skeleton.bones.len());
         } else {
-            println!("[Animation] -> WARNING: No skeleton found for model '{}'", instance.model_name);
+            log::warn!("[Animation] -> WARNING: No skeleton found for model '{}'", instance.model_name);
         }
     }
 }
@@ -183,7 +184,7 @@ fn calculate_bone_transform(animation: &Animation, bone_name: &str, time_in_tick
         
         // Log interpolation details for debugging
         if bone_name.contains("Armature") || bone_name.contains("Bone") {
-            println!("[Interpolation] Bone '{}': pos=[{:.3}, {:.3}, {:.3}], rot=[{:.3}, {:.3}, {:.3}, {:.3}], scale=[{:.3}, {:.3}, {:.3}]", 
+            log::debug!("[Interpolation] Bone '{}': pos=[{:.3}, {:.3}, {:.3}], rot=[{:.3}, {:.3}, {:.3}, {:.3}], scale=[{:.3}, {:.3}, {:.3}]", 
                 bone_name, position.x, position.y, position.z,
                 rotation.x, rotation.y, rotation.z, rotation.w,
                 scale.x, scale.y, scale.z);
@@ -193,7 +194,7 @@ fn calculate_bone_transform(animation: &Animation, bone_name: &str, time_in_tick
     } else {
         // If no animation channel affects this bone, return the bone's bind pose transform
         if bone_name.contains("Armature") || bone_name.contains("Bone") {
-            println!("[Interpolation] Bone '{}': using default transform (no animation channel)", bone_name);
+            log::debug!("[Interpolation] Bone '{}': using default transform (no animation channel)", bone_name);
         }
         default_transform
     }
@@ -245,7 +246,7 @@ fn find_interpolated_position(time_in_ticks: f64, keys: &[PositionKey]) -> Optio
     
     // Log interpolation details for debugging
     if keys.len() > 1 && (prev_key.position - next_key.position).length() > 0.1 {
-        println!("[Interpolation] Position: t={:.3}, factor={:.3}, prev=[{:.3}, {:.3}, {:.3}], next=[{:.3}, {:.3}, {:.3}], result=[{:.3}, {:.3}, {:.3}]", 
+        log::debug!("[Interpolation] Position: t={:.3}, factor={:.3}, prev=[{:.3}, {:.3}, {:.3}], next=[{:.3}, {:.3}, {:.3}], result=[{:.3}, {:.3}, {:.3}]", 
             time_in_ticks, interpolation_factor,
             prev_key.position.x, prev_key.position.y, prev_key.position.z,
             next_key.position.x, next_key.position.y, next_key.position.z,
@@ -285,7 +286,7 @@ fn find_interpolated_rotation(time_in_ticks: f64, keys: &[RotationKey]) -> Optio
         let dot = last_key.rotation.dot(target_rotation);
         if dot < 0.0 {
             target_rotation = -target_rotation;
-            println!("[Quat Interp] WARNING: Negative dot product ({:.3}) between loop keyframes at t={:.2} and t={:.2}. Animation will flip!", dot, last_key.time, first_key.time);
+            log::warn!("[Quat Interp] WARNING: Negative dot product ({:.3}) between loop keyframes at t={:.2} and t={:.2}. Animation will flip!", dot, last_key.time, first_key.time);
         }
         
         return Some(last_key.rotation.slerp(target_rotation, interpolation_factor.min(1.0) as f32));
@@ -315,7 +316,7 @@ fn find_interpolated_rotation(time_in_ticks: f64, keys: &[RotationKey]) -> Optio
     let dot = prev_key.rotation.dot(next_quat_for_interp);
     if dot < 0.0 {
         // Instead of negating, use a smoother interpolation that avoids the flip
-        println!("[Quat Interp] DETECTED: Negative dot product ({:.3}) between keyframes at t={:.2} and t={:.2}. Using smooth transition!", dot, prev_key.time, next_key.time);
+        log::warn!("[Quat Interp] DETECTED: Negative dot product ({:.3}) between keyframes at t={:.2} and t={:.2}. Using smooth transition!", dot, prev_key.time, next_key.time);
         
         // Use a step function to avoid the flip entirely
         if interpolation_factor < 0.5 {
@@ -329,7 +330,7 @@ fn find_interpolated_rotation(time_in_ticks: f64, keys: &[RotationKey]) -> Optio
     let prev_is_identity = prev_key.rotation.length_squared() < 0.01;
     let next_is_identity = next_key.rotation.length_squared() < 0.01;
     if prev_is_identity || next_is_identity {
-        println!("[Quat Interp] WARNING: Identity quaternion detected! prev_is_identity={}, next_is_identity={} at t={:.2} and t={:.2}", 
+        log::warn!("[Quat Interp] WARNING: Identity quaternion detected! prev_is_identity={}, next_is_identity={} at t={:.2} and t={:.2}", 
             prev_is_identity, next_is_identity, prev_key.time, next_key.time);
     }
     
@@ -357,7 +358,7 @@ fn find_interpolated_rotation(time_in_ticks: f64, keys: &[RotationKey]) -> Optio
     
     // Log interpolation details for debugging
     if keys.len() > 1 && (prev_key.rotation.xyz() - next_key.rotation.xyz()).length() > 0.1 {
-        println!("[Interpolation] Rotation: t={:.3}, factor={:.3}, prev=[{:.3}, {:.3}, {:.3}, {:.3}], next=[{:.3}, {:.3}, {:.3}, {:.3}], result=[{:.3}, {:.3}, {:.3}, {:.3}]", 
+        log::debug!("[Interpolation] Rotation: t={:.3}, factor={:.3}, prev=[{:.3}, {:.3}, {:.3}, {:.3}], next=[{:.3}, {:.3}, {:.3}, {:.3}], result=[{:.3}, {:.3}, {:.3}, {:.3}]", 
             time_in_ticks, interpolation_factor,
             prev_key.rotation.x, prev_key.rotation.y, prev_key.rotation.z, prev_key.rotation.w,
             next_key.rotation.x, next_key.rotation.y, next_key.rotation.z, next_key.rotation.w,
@@ -367,7 +368,7 @@ fn find_interpolated_rotation(time_in_ticks: f64, keys: &[RotationKey]) -> Optio
     // **DEFENSIVE INTERPOLATION**: Handle large rotation differences gracefully
     let angle_diff = prev_key.rotation.angle_between(next_key.rotation);
     if angle_diff > 2.0 { // More than ~115 degrees
-        println!("[Quat Interp] WARNING: Large rotation difference ({:.1}°) between keyframes at t={:.2} and t={:.2}. Using defensive interpolation!", 
+        log::warn!("[Quat Interp] WARNING: Large rotation difference ({:.1}°) between keyframes at t={:.2} and t={:.2}. Using defensive interpolation!", 
             angle_diff.to_degrees(), prev_key.time, next_key.time);
         
         // For large rotations, use a step function to avoid sudden flips
@@ -436,12 +437,12 @@ fn find_interpolated_scale(time_in_ticks: f64, keys: &[ScaleKey]) -> Option<Vec3
     
     // **LOGGING**: Check for near-zero scale values, which cause the "crushed into a ball" effect.
     if result.length_squared() < 0.01 { // 0.1 * 0.1
-        println!("[Scale Interp] WARNING: Scale is near zero ({:.3}, {:.3}, {:.3}) at t={:.2}. Mesh will be crushed!", result.x, result.y, result.z, time_in_ticks);
+        log::warn!("[Scale Interp] WARNING: Scale is near zero ({:.3}, {:.3}, {:.3}) at t={:.2}. Mesh will be crushed!", result.x, result.y, result.z, time_in_ticks);
     }
     
     // **DEBUGGING**: Log all scale interpolations to see what's happening
     if keys.len() > 1 {
-        println!("[Scale Interp] t={:.3}, factor={:.3}, prev=[{:.3}, {:.3}, {:.3}], next=[{:.3}, {:.3}, {:.3}], result=[{:.3}, {:.3}, {:.3}]", 
+        log::debug!("[Scale Interp] t={:.3}, factor={:.3}, prev=[{:.3}, {:.3}, {:.3}], next=[{:.3}, {:.3}, {:.3}], result=[{:.3}, {:.3}, {:.3}]", 
             time_in_ticks, interpolation_factor,
             prev_key.scale.x, prev_key.scale.y, prev_key.scale.z,
             next_key.scale.x, next_key.scale.y, next_key.scale.z,
@@ -450,7 +451,7 @@ fn find_interpolated_scale(time_in_ticks: f64, keys: &[ScaleKey]) -> Option<Vec3
     
     // Log interpolation details for debugging
     if keys.len() > 1 && (prev_key.scale - next_key.scale).length() > 0.1 {
-        println!("[Interpolation] Scale: t={:.3}, factor={:.3}, prev=[{:.3}, {:.3}, {:.3}], next=[{:.3}, {:.3}, {:.3}], result=[{:.3}, {:.3}, {:.3}]", 
+        log::debug!("[Interpolation] Scale: t={:.3}, factor={:.3}, prev=[{:.3}, {:.3}, {:.3}], next=[{:.3}, {:.3}, {:.3}], result=[{:.3}, {:.3}, {:.3}]", 
             time_in_ticks, interpolation_factor,
             prev_key.scale.x, prev_key.scale.y, prev_key.scale.z,
             next_key.scale.x, next_key.scale.y, next_key.scale.z,

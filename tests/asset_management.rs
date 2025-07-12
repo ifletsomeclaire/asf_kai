@@ -10,6 +10,7 @@
 use bevy_derive::{Deref, DerefMut};
 use bevy_ecs::prelude::*;
 use std::sync::Arc;
+use log;
 
 // --- 1. Define the individual asset types ---
 #[derive(Debug)]
@@ -20,7 +21,7 @@ pub struct Texture {
 
 impl Drop for Texture {
     fn drop(&mut self) {
-        println!(
+        log::info!(
             "✅ Deallocating Texture asset '{}' (ID: {})",
             self.path, self.id
         );
@@ -35,7 +36,7 @@ pub struct Mesh {
 
 impl Drop for Mesh {
     fn drop(&mut self) {
-        println!(
+        log::info!(
             "✅ Deallocating Mesh asset '{}' (ID: {})",
             self.path, self.id
         );
@@ -107,9 +108,12 @@ struct Player;
 
 #[test]
 fn asset_handle_rc_should_drop_when_entity_is_despawned() {
-    println!("--- Bevy ECS Asset Management Test ---");
-    println!("NOTE: A player entity will be spawned and then despawned.");
-    println!("Watch for the 'Deallocating' messages when the test is finished.\n");
+    // Initialize logger for tests
+    let _ = env_logger::try_init();
+    
+    log::info!("--- Bevy ECS Asset Management Test ---");
+    log::info!("NOTE: A player entity will be spawned and then despawned.");
+    log::info!("Watch for the 'Deallocating' messages when the test is finished.\n");
 
     // 1. Setup World
     let mut world = World::new();
@@ -117,18 +121,18 @@ fn asset_handle_rc_should_drop_when_entity_is_despawned() {
     // 2. Setup asset server and load assets
     let asset_server = AssetServer::new();
 
-    println!("[SETUP] Loading assets...");
+    log::info!("[SETUP] Loading assets...");
     let player_texture = asset_server.load_texture(101, "assets/player.png");
     let player_mesh = asset_server.load_mesh(201, "assets/player.obj");
 
     // The asset server created the "original" handles. Ref count is 1.
     assert_eq!(1, Arc::strong_count(&player_texture.0));
     assert_eq!(1, Arc::strong_count(&player_mesh.0));
-    println!("[SETUP] Initial Ref Counts are correct (1).");
+    log::info!("[SETUP] Initial Ref Counts are correct (1).");
 
     // 3. Spawn a player entity and attach the handles as components.
     // This clones the handles, increasing their ref counts.
-    println!("[SETUP] Spawning player entity...");
+    log::info!("[SETUP] Spawning player entity...");
     let player_entity = world
         .spawn((Player, player_texture.clone(), player_mesh.clone()))
         .id();
@@ -136,21 +140,21 @@ fn asset_handle_rc_should_drop_when_entity_is_despawned() {
     // The world now holds a clone, and we hold the original. Ref count is 2.
     assert_eq!(2, Arc::strong_count(&player_texture.0));
     assert_eq!(2, Arc::strong_count(&player_mesh.0));
-    println!("[SETUP] Ref Counts after spawn are correct (2).");
+    log::info!("[SETUP] Ref Counts after spawn are correct (2).");
 
     // 4. Despawn the player entity.
-    println!("\n[ACTION] Despawning player...");
+    log::info!("\n[ACTION] Despawning player...");
     let despawned = world.despawn(player_entity);
     assert!(despawned);
-    println!("[ACTION] Player despawned.");
+    log::info!("[ACTION] Player despawned.");
 
     // After despawning, the components are dropped, and the world's handle clones are released.
     // The ref count should go back to 1.
     assert_eq!(1, Arc::strong_count(&player_texture.0));
     assert_eq!(1, Arc::strong_count(&player_mesh.0));
-    println!("[VERIFY] Ref Counts after despawn are correct (1).");
+    log::info!("[VERIFY] Ref Counts after despawn are correct (1).");
 
-    println!("\n[CLEANUP] Test scope is ending. Original handles will be dropped now.");
+    log::info!("\n[CLEANUP] Test scope is ending. Original handles will be dropped now.");
     // The test function now drops `player_texture` and `player_mesh`.
     // The ref count will go to 0, and the `Drop` impl on `Texture` and `Mesh` will run.
 }

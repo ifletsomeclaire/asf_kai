@@ -9,7 +9,7 @@ use crate::{
     renderer::{
         assets::AssetServer,
         core::{WgpuDevice,  WgpuQueue},
-        pipelines::tonemapping::{DepthTexture, HdrTexture},
+        pipelines::tonemapping::{DepthTexture, HdrTexture, IdTexture},
     },
 };
 
@@ -67,11 +67,18 @@ impl D3Pipeline {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "fs_main".into(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
+                targets: &[
+                    Some(wgpu::ColorTargetState {  // Color output
+                        format: surface_format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                    Some(wgpu::ColorTargetState {  // Entity ID output
+                        format: wgpu::TextureFormat::R32Uint,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                ],
                 compilation_options: PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {
@@ -114,6 +121,7 @@ pub fn render_d3_pipeline_system(
     asset_server: Res<AssetServer>,
     depth_texture: Res<DepthTexture>,
     hdr_texture: Res<HdrTexture>,
+    id_texture: Res<IdTexture>,
     camera_query: Query<(&Camera, &GlobalTransform)>,
 ) {
     // If the mesh bind group doesn't exist on the asset server, it's because
@@ -159,14 +167,24 @@ pub fn render_d3_pipeline_system(
     {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("D3 Render Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &hdr_texture.view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load, 
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
+            color_attachments: &[
+                Some(wgpu::RenderPassColorAttachment {  // Color
+                    view: &hdr_texture.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load, 
+                        store: wgpu::StoreOp::Store,
+                    },
+                }),
+                Some(wgpu::RenderPassColorAttachment {  // Entity IDs
+                    view: &id_texture.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                }),
+            ],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &depth_texture.view,
                 depth_ops: Some(wgpu::Operations {

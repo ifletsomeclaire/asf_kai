@@ -10,6 +10,8 @@ bevy_ecs = { version = "0.16.1" }
 # This is needed because the test file defines its own components.
 # In a real scenario, this might depend on the actual crates in the workspace.
 bevy_derive = "0.16.1"
+log = "0.4"
+env_logger = "0.11"
 
 [[test]]
 name = "asset_management"

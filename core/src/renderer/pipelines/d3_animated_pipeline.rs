@@ -1,10 +1,10 @@
 use bevy_ecs::{
-    prelude::{Query, Res, Resource, With},
+    prelude::{Query, Res, Resource, With, Entity},
 };
 use bevy_transform::components::GlobalTransform;
-use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
 use wgpu::{include_wgsl, util::DeviceExt, PipelineCompilationOptions};
+use log;
 
 use crate::{
     ecs::{
@@ -17,7 +17,7 @@ use crate::{
             AssetServer,
         },
         core::{WgpuDevice, WgpuQueue},
-        pipelines::tonemapping::{DepthTexture, HdrTexture},
+        pipelines::tonemapping::{DepthTexture, HdrTexture, IdTexture},
     },
 };
 
@@ -107,11 +107,18 @@ impl D3AnimatedPipeline {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "fs_main".into(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
+                targets: &[
+                    Some(wgpu::ColorTargetState {  // Color output
+                        format: surface_format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                    Some(wgpu::ColorTargetState {  // Entity ID output
+                        format: wgpu::TextureFormat::R32Uint,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                ],
                 compilation_options: PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {
@@ -154,8 +161,10 @@ pub fn render_d3_animated_pipeline_system(
     depth_texture: Res<DepthTexture>,
     hdr_texture: Res<HdrTexture>,
     camera_buffer: Res<CameraUniformBuffer>,
+    // Add ID texture to the system parameters
+    id_texture: Res<IdTexture>,
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera>>,
-    animated_instance_query: Query<(&AnimatedInstance, &BoneMatrices, &GlobalTransform)>,
+    animated_instance_query: Query<(Entity, &AnimatedInstance, &BoneMatrices, &GlobalTransform)>,
 ) {
     let animated_meshlet_manager = &asset_server.animated_meshlet_manager;
 
@@ -176,21 +185,21 @@ pub fn render_d3_animated_pipeline_system(
     let mut bone_matrix_offsets = Vec::new();
     
     // Iterate over the entities that are actually in the scene right now.
-    for (instance_index, (instance, bone_matrices, _transform)) in
+    for (instance_index, (entity, instance, bone_matrices, _transform)) in
         animated_instance_query.iter().enumerate()
     {
         // Note: We no longer need to track transforms separately since bone matrices include world transform
 
         // Track where this instance's bone matrices start
         let bone_matrix_offset = all_bone_matrices.len() as u32;
-        println!("[Animated Render] Instance[{}] '{}': bone_matrix_offset = {} (adding {} matrices)", 
+        log::debug!("[Animated Render] Instance[{}] '{}': bone_matrix_offset = {} (adding {} matrices)", 
             instance_index, instance.model_name, bone_matrix_offset, bone_matrices.matrices.len());
         
         // Log bone matrix details for first few bones
         if instance_index < 2 {
             for (i, matrix) in bone_matrices.matrices.iter().take(3).enumerate() {
                 let pos = matrix.transform_point3(glam::Vec3::ZERO);
-                println!("[Animated Render]   Bone {} matrix: pos=[{:.3}, {:.3}, {:.3}]", 
+                log::debug!("[Animated Render]   Bone {} matrix: pos=[{:.3}, {:.3}, {:.3}]", 
                     i, pos.x, pos.y, pos.z);
             }
         }
@@ -202,29 +211,30 @@ pub fn render_d3_animated_pipeline_system(
 
         // Find the meshlets associated with this instance's model name.
         if let Some(model_meshlets_list) = animated_meshlet_manager.model_meshlets.get(&instance.model_name) {
-            println!("[Animated Render] Creating draw commands for model '{}' (instance {}):", instance.model_name, instance_index);
+            log::debug!("[Animated Render] Creating draw commands for model '{}' (instance {}):", instance.model_name, instance_index);
             for (meshlet_group_idx, model_meshlets) in model_meshlets_list.iter().enumerate() {
-                println!("[Animated Render]   Meshlet group {}: {} meshlets, texture_id={}", 
+                log::debug!("[Animated Render]   Meshlet group {}: {} meshlets, texture_id={}", 
                     meshlet_group_idx, model_meshlets.meshlet_indices.len(), model_meshlets.texture_id);
                 for (meshlet_idx, &meshlet_id) in model_meshlets.meshlet_indices.iter().enumerate() {
                     if meshlet_idx < 3 { // Only print first 3 for brevity
-                        println!("[Animated Render]     Meshlet[{}]: id={}, bone_set_id={}", 
+                        log::debug!("[Animated Render]     Meshlet[{}]: id={}, bone_set_id={}", 
                             meshlet_idx, meshlet_id, instance_index);
                     }
                     // Create a new draw command with the correct, frame-specific IDs.
                     draw_commands.push(AnimatedDrawCommand {
                         meshlet_id,
                         bone_set_id: instance_index as u32, // Use instance index as bone_set_id for proper indexing
-                        transform_id: 0, // No longer used since bone matrices include world transform
+                        transform_id: instance_index as u32, // Use instance index as transform_id for positioning
+                        entity_id: entity.index(),  // Direct Entity ID
                         texture_id: model_meshlets.texture_id,
                     });
                 }
                 if model_meshlets.meshlet_indices.len() > 3 {
-                    println!("[Animated Render]     ... and {} more meshlets", model_meshlets.meshlet_indices.len() - 3);
+                    log::debug!("[Animated Render]     ... and {} more meshlets", model_meshlets.meshlet_indices.len() - 3);
                 }
             }
         } else {
-            println!("[Animated Render] WARNING: No meshlets found for model '{}'", instance.model_name);
+            log::warn!("[Animated Render] WARNING: No meshlets found for model '{}'", instance.model_name);
         }
     }
 
@@ -232,41 +242,42 @@ pub fn render_d3_animated_pipeline_system(
         return; // Nothing to draw this frame.
     }
 
-    println!("[Animated Render] Drawing {} commands", draw_commands.len());
+    log::info!("[Animated Render] Drawing {} commands", draw_commands.len());
     if !draw_commands.is_empty() {
-        println!("[Animated Render] First draw command: meshlet_id={}, bone_set_id={}, transform_id={}, texture_id={}", 
-            draw_commands[0].meshlet_id,
-            draw_commands[0].bone_set_id, 
-            draw_commands[0].transform_id,
-            draw_commands[0].texture_id
-        );
+        log::debug!("[Animated Render] First draw command: meshlet_id={}, bone_set_id={}, transform_id={}, entity_id={}, texture_id={}", 
+            draw_commands[0].meshlet_id, draw_commands[0].bone_set_id, 
+            draw_commands[0].transform_id, draw_commands[0].entity_id, draw_commands[0].texture_id);
+        log::debug!("[Animated Render]   Last draw command: meshlet_id={}, bone_set_id={}, transform_id={}, entity_id={}, texture_id={}", 
+            draw_commands[draw_commands.len()-1].meshlet_id, draw_commands[draw_commands.len()-1].bone_set_id, 
+            draw_commands[draw_commands.len()-1].transform_id, draw_commands[draw_commands.len()-1].entity_id, draw_commands[draw_commands.len()-1].texture_id);
     }
-    println!("[Animated Render] Total bone matrices: {}", all_bone_matrices.len());
     
-    println!("[Animated Render] Bone matrix layout:");
+    log::debug!("[Animated Render] Total bone matrices: {}", all_bone_matrices.len());
+    
+    log::debug!("[Animated Render] Bone matrix layout:");
     let mut offset = 0;
-    for (i, (instance, bone_matrices, _)) in animated_instance_query.iter().enumerate() {
-        println!("[Animated Render]   Instance[{}] '{}': offset={}, count={}", 
+    for (i, (_entity, instance, bone_matrices, _)) in animated_instance_query.iter().enumerate() {
+        log::debug!("[Animated Render]   Instance[{}] '{}': offset={}, count={}", 
             i, instance.model_name, offset, bone_matrices.matrices.len());
         offset += bone_matrices.matrices.len();
     }
     
-    println!("[Animated Render] Draw command summary:");
-    println!("[Animated Render]   Total draw commands: {}", draw_commands.len());
+    log::debug!("[Animated Render] Draw command summary:");
+    log::debug!("[Animated Render]   Total draw commands: {}", draw_commands.len());
     if !draw_commands.is_empty() {
-        println!("[Animated Render]   First draw command: meshlet_id={}, bone_set_id={}, transform_id={}, texture_id={}", 
+        log::debug!("[Animated Render]   First draw command: meshlet_id={}, bone_set_id={}, transform_id={}, entity_id={}, texture_id={}", 
             draw_commands[0].meshlet_id, draw_commands[0].bone_set_id, 
-            draw_commands[0].transform_id, draw_commands[0].texture_id);
-        println!("[Animated Render]   Last draw command: meshlet_id={}, bone_set_id={}, transform_id={}, texture_id={}", 
+            draw_commands[0].transform_id, draw_commands[0].entity_id, draw_commands[0].texture_id);
+        log::debug!("[Animated Render]   Last draw command: meshlet_id={}, bone_set_id={}, transform_id={}, entity_id={}, texture_id={}", 
             draw_commands[draw_commands.len()-1].meshlet_id, draw_commands[draw_commands.len()-1].bone_set_id, 
-            draw_commands[draw_commands.len()-1].transform_id, draw_commands[draw_commands.len()-1].texture_id);
+            draw_commands[draw_commands.len()-1].transform_id, draw_commands[draw_commands.len()-1].entity_id, draw_commands[draw_commands.len()-1].texture_id);
     }
     
     // Log GPU buffer creation details
-    println!("[Animated Render] Creating GPU buffers:");
-    println!("[Animated Render]   Bone matrix buffer: {} matrices, {} bytes", 
+    log::debug!("[Animated Render] Creating GPU buffers:");
+    log::debug!("[Animated Render]   Bone matrix buffer: {} matrices, {} bytes", 
         all_bone_matrices.len(), all_bone_matrices.len() * std::mem::size_of::<Mat4>());
-    println!("[Animated Render]   Indirection buffer: {} commands, {} bytes", 
+    log::debug!("[Animated Render]   Indirection buffer: {} commands, {} bytes", 
         draw_commands.len(), draw_commands.len() * std::mem::size_of::<AnimatedDrawCommand>());
 
     // --- 2. Update GPU Buffers ---
@@ -326,14 +337,24 @@ pub fn render_d3_animated_pipeline_system(
     {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("D3 Animated Render Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &hdr_texture.view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
+            color_attachments: &[
+                Some(wgpu::RenderPassColorAttachment {  // Color
+                    view: &hdr_texture.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                }),
+                Some(wgpu::RenderPassColorAttachment {  // Entity IDs
+                    view: &id_texture.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                }),
+            ],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &depth_texture.view,
                 depth_ops: Some(wgpu::Operations {
@@ -358,4 +379,13 @@ pub fn render_d3_animated_pipeline_system(
     }
 
     queue.submit(Some(encoder.finish()));
+    
+    // GPU picking integration
+    // if let Some(mut gpu_picking) = world.get_resource_mut::<gpu_picking::GPUPicking>() {
+    //     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+    //         label: Some("GPU Picking Encoder"),
+    //     });
+    //     gpu_picking.pick(&queue, &mut encoder);
+    //     queue.submit(Some(encoder.finish()));
+    // }
 }

@@ -5,6 +5,7 @@ use types::{AnimatedModel, SkinnedVertex, AABB, Skeleton, Animation};
 use wgpu::util::DeviceExt;
 use bevy_ecs::prelude::Resource;
 use bytemuck::{Pod, Zeroable};
+use log;
 
 use crate::renderer::assets::static_meshlet::MeshletDescription;
 
@@ -14,7 +15,8 @@ use crate::renderer::assets::static_meshlet::MeshletDescription;
 pub struct AnimatedDrawCommand {
     pub meshlet_id: u32,
     pub bone_set_id: u32,
-    pub transform_id: u32,
+    pub transform_id: u32,  // Still needed for positioning
+    pub entity_id: u32,     // Entity ID for picking
     pub texture_id: u32,
 }
 
@@ -78,16 +80,16 @@ impl AnimatedMeshletManager {
             .collect();
 
         // Log animation details
-        println!("[Asset Loading] Found {} animations in the database:", animations.len());
+        log::info!("[Asset Loading] Found {} animations in the database:", animations.len());
         for (anim_name, animation) in &animations {
-            println!("  Animation: '{}'", anim_name);
-            println!("    Duration: {} ticks ({} seconds)", 
+            log::info!("  Animation: '{}'", anim_name);
+            log::info!("    Duration: {} ticks ({} seconds)", 
                 animation.duration_in_ticks, 
                 animation.duration_in_ticks as f32 / animation.ticks_per_second as f32);
-            println!("    Ticks per second: {}", animation.ticks_per_second);
-            println!("    Channels: {}", animation.channels.len());
+            log::info!("    Ticks per second: {}", animation.ticks_per_second);
+            log::info!("    Channels: {}", animation.channels.len());
             for (i, channel) in animation.channels.iter().enumerate() {
-                println!("      Channel {}: bone='{}', pos_keys={}, rot_keys={}, scale_keys={}", 
+                log::info!("      Channel {}: bone='{}', pos_keys={}, rot_keys={}, scale_keys={}", 
                     i, channel.bone_name, channel.position_keys.len(), 
                     channel.rotation_keys.len(), channel.scale_keys.len());
                 
@@ -95,7 +97,7 @@ impl AnimatedMeshletManager {
                 if !channel.position_keys.is_empty() {
                     let first_pos = &channel.position_keys[0];
                     let last_pos = &channel.position_keys[channel.position_keys.len() - 1];
-                    println!("        Position range: [{:.3}, {:.3}, {:.3}] to [{:.3}, {:.3}, {:.3}]", 
+                    log::info!("        Position range: [{:.3}, {:.3}, {:.3}] to [{:.3}, {:.3}, {:.3}]", 
                         first_pos.position.x, first_pos.position.y, first_pos.position.z,
                         last_pos.position.x, last_pos.position.y, last_pos.position.z);
                 }
@@ -103,7 +105,7 @@ impl AnimatedMeshletManager {
                 if !channel.rotation_keys.is_empty() {
                     let first_rot = &channel.rotation_keys[0];
                     let last_rot = &channel.rotation_keys[channel.rotation_keys.len() - 1];
-                    println!("        Rotation range: [{:.3}, {:.3}, {:.3}, {:.3}] to [{:.3}, {:.3}, {:.3}, {:.3}]", 
+                    log::info!("        Rotation range: [{:.3}, {:.3}, {:.3}, {:.3}] to [{:.3}, {:.3}, {:.3}, {:.3}]", 
                         first_rot.rotation.x, first_rot.rotation.y, first_rot.rotation.z, first_rot.rotation.w,
                         last_rot.rotation.x, last_rot.rotation.y, last_rot.rotation.z, last_rot.rotation.w);
                 }
@@ -120,16 +122,16 @@ impl AnimatedMeshletManager {
             })
             .collect();
 
-        println!("[Asset Loading] Found {} animated models in the database.", models.len());
+        log::info!("[Asset Loading] Found {} animated models in the database.", models.len());
 
         let aabbs: Vec<AABB> = models.iter().map(|model| model.aabb).collect();
         let transforms = crate::renderer::assets::layout_models_in_a_row(&aabbs);
 
         for (transform_id, model) in models.iter().enumerate() {
-            println!("[Asset Loading] Loading animated model: '{}'", model.name);
-            println!("  Skeleton: {} bones", model.skeleton.bones.len());
+            log::info!("[Asset Loading] Loading animated model: '{}'", model.name);
+            log::info!("  Skeleton: {} bones", model.skeleton.bones.len());
             for (i, bone) in model.skeleton.bones.iter().enumerate() {
-                println!("    Bone {}: '{}' (parent: {})", 
+                log::info!("    Bone {}: '{}' (parent: {})", 
                     i, bone.name, 
                     bone.parent_index.map(|p| p.to_string()).unwrap_or_else(|| "None".to_string()));
                 
@@ -137,7 +139,7 @@ impl AnimatedMeshletManager {
                 if i < 3 {
                     let bone_pos = bone.transform.transform_point3(glam::Vec3::ZERO);
                     let inv_pos = bone.inverse_bind_pose.transform_point3(glam::Vec3::ZERO);
-                    println!("      Transform: pos=[{:.3}, {:.3}, {:.3}], inv_pos=[{:.3}, {:.3}, {:.3}]", 
+                    log::info!("      Transform: pos=[{:.3}, {:.3}, {:.3}], inv_pos=[{:.3}, {:.3}, {:.3}]", 
                         bone_pos.x, bone_pos.y, bone_pos.z, inv_pos.x, inv_pos.y, inv_pos.z);
                 }
             }
@@ -145,18 +147,18 @@ impl AnimatedMeshletManager {
             
             let mut model_meshlets_list = Vec::new();
 
-            println!("  Processing {} meshes...", model.meshes.len());
+            log::info!("  Processing {} meshes...", model.meshes.len());
             for (mesh_idx, mesh) in model.meshes.iter().enumerate() {
-                println!("    Mesh {}: '{}'", mesh_idx, mesh.name);
-                println!("      Vertices: {}", mesh.vertices.len());
-                println!("      Indices: {}", mesh.indices.len());
-                println!("      Texture: {:?}", mesh.texture_name);
+                log::info!("    Mesh {}: '{}'", mesh_idx, mesh.name);
+                log::info!("      Vertices: {}", mesh.vertices.len());
+                log::info!("      Indices: {}", mesh.indices.len());
+                log::info!("      Texture: {:?}", mesh.texture_name);
                 
                 // Log vertex bone data statistics
                 let vertices_with_bones = mesh.vertices.iter()
                     .filter(|v| v.bone_indices.iter().any(|&idx| idx != 0))
                     .count();
-                println!("      Vertices with bone influences: {}/{}", vertices_with_bones, mesh.vertices.len());
+                log::info!("      Vertices with bone influences: {}/{}", vertices_with_bones, mesh.vertices.len());
                 
                 // Log bone weight distribution
                 let mut bone_usage = std::collections::HashMap::new();
@@ -167,7 +169,7 @@ impl AnimatedMeshletManager {
                         }
                     }
                 }
-                println!("      Bone usage: {} unique bones used", bone_usage.len());
+                log::info!("      Bone usage: {} unique bones used", bone_usage.len());
                 
                 if let Some(mesh_meshlets) = &mesh.meshlets {
                     let vertex_base = all_vertices.len() as u32;
@@ -190,7 +192,7 @@ impl AnimatedMeshletManager {
                         .and_then(|name| texture_map.get(name).copied())
                         .unwrap_or(0);
 
-                    println!(
+                    log::info!(
                         "      Generated {} meshlets (vertex_base={}, triangle_base={})",
                         mesh_meshlets.meshlets.len(),
                         vertex_base,
@@ -213,14 +215,15 @@ impl AnimatedMeshletManager {
 
                         // Log first few meshlets for debugging
                         if meshlet_idx < 3 {
-                            println!("        Meshlet {}: id={}, vertices={}, triangles={}", 
+                            log::debug!("        Meshlet {}: id={}, vertices={}, triangles={}", 
                                 meshlet_idx, meshlet_id, m.vertex_count, m.triangle_count);
                         }
 
                         let draw_command = AnimatedDrawCommand {
                             meshlet_id,
                             bone_set_id: 0, // Placeholder, will be updated later
-                            transform_id: transform_id as u32,
+                            transform_id: transform_id as u32, // Use transform_id as transform_id
+                            entity_id: transform_id as u32, // Use transform_id as entity_id
                             texture_id,
                         };
                         draw_commands.push(draw_command);
@@ -232,24 +235,24 @@ impl AnimatedMeshletManager {
                     });
 
                 } else {
-                    println!("      WARNING: No meshlets generated for this mesh");
+                    log::warn!("      WARNING: No meshlets generated for this mesh");
                 }
             }
 
-            println!("  -> Stored {} mesh groups for this model.", model_meshlets_list.len());
+            log::info!("  -> Stored {} mesh groups for this model.", model_meshlets_list.len());
             model_meshlets.insert(model.name.clone(), model_meshlets_list);
         }
 
-        println!(
+        log::info!(
             "[Asset Loading] AnimatedMeshletManager created. Total vertices: {}, Total meshlets: {}",
             all_vertices.len(),
             all_meshlets.len()
         );
 
-        println!("[AnimatedMeshletManager] Total meshlets created: {}", all_meshlets.len());
-        println!("[AnimatedMeshletManager] Total draw commands: {}", draw_commands.len());
+        log::info!("[AnimatedMeshletManager] Total meshlets created: {}", all_meshlets.len());
+        log::info!("[AnimatedMeshletManager] Total draw commands: {}", draw_commands.len());
         if !all_meshlets.is_empty() {
-            println!("[AnimatedMeshletManager] First meshlet: vertex_count={}, triangle_count={}", 
+            log::info!("[AnimatedMeshletManager] First meshlet: vertex_count={}, triangle_count={}", 
                 all_meshlets[0].vertex_count,
                 all_meshlets[0].triangle_count
             );
