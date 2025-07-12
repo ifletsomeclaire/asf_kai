@@ -226,11 +226,11 @@ pub fn ui_system(mut p: UiSystemParams) {
     // GPU Picking Window
     egui::Window::new("GPU Picking").show(ctx, |ui| {
         // Display current pick coordinates
-        if let Some(origin) = p.gpu_picking.selection_origin {
-            ui.label(format!("Pick Coordinates: ({}, {})", origin[0], origin[1]));
-        } else {
-            ui.label("No pick coordinates set");
-        }
+        // if let Some(origin) = p.gpu_picking.selection_box {
+        //     ui.label(format!("Pick Coordinates: ({}, {})", origin[0], origin[1]));
+        // } else {
+        //     ui.label("No pick coordinates set");
+        // }
         
         ui.separator();
         

@@ -6,6 +6,8 @@ use bevy_transform::{
 };
 use eframe::egui::{self};
 use glam::Mat4;
+use gpu_picking::GPUPicking;
+use wgpu::{PollStatus, PollType};
 use std::sync::Arc;
 
 use crate::{
@@ -26,10 +28,10 @@ use crate::{
             d3_pipeline::render_d3_pipeline_system,
             tonemapping::{
                 resize_hdr_texture_system, setup_tonemapping_pass_system, TonemappingBindGroup,
-                TonemappingPass,
+                TonemappingPass, clear_hdr_and_id_texture_system,
             },
             triangle::{
-                clear_hdr_texture_system, render_triangle_system, setup_triangle_pass_system,
+                render_triangle_system, setup_triangle_pass_system,
             },
         },
     },
@@ -39,38 +41,6 @@ use crate::{
 #[derive(Component)]
 pub struct Selected;
 
-pub fn process_picking_results_system(
-    mut gpu_picking: ResMut<gpu_picking::GPUPicking>,
-    mut commands: Commands,
-    animated_instance_query: Query<(Entity, &AnimatedInstance)>,
-    static_meshlet_query: Query<Entity>,
-) {
-    gpu_picking.check_and_update_result();
-    
-    if let Some(entity_indices) = gpu_picking.get_last_result() {
-        log::info!("[GPU Picking] Found {} entities at pick location:", entity_indices.len());
-        
-        for &index in entity_indices {
-            let entity = Entity::from_raw(index);
-            
-            // Check if it's an animated instance
-            if let Ok((entity, instance)) = animated_instance_query.get(entity) {
-                log::info!("[GPU Picking] Selected animated entity {}: model='{}'", 
-                    entity.index(), instance.model_name);
-            } else {
-                // Check if it's a static meshlet (using transform_id as entity_id)
-                log::info!("[GPU Picking] Selected static meshlet entity {} (transform_id: {})", 
-                    entity.index(), index);
-            }
-            
-            // Handle selection - add component, highlight, etc.
-            commands.entity(entity).insert(Selected);
-        }
-        
-        // Clear the result after processing
-        gpu_picking.clear_result();
-    }
-}
 
 #[derive(ScheduleLabel, Debug, Clone, PartialEq, Eq, Hash)]
 struct Update;
@@ -275,14 +245,14 @@ impl Custom3d {
         );
         update_schedule.add_systems(
             (
-                clear_hdr_texture_system,
+                clear_hdr_and_id_texture_system,
                 render_triangle_system.run_if(|ui_state: Res<UiState>| ui_state.render_triangle),
                 render_d3_pipeline_system
                     .run_if(|ui_state: Res<UiState>| ui_state.render_static_meshlets),
                 render_d3_animated_pipeline_system
                     .run_if(|ui_state: Res<UiState>| ui_state.render_animated_meshlets),
                 gpu_picking_system,
-                process_picking_results_system,
+              
             )
                 .chain(),
         );
@@ -305,31 +275,39 @@ impl eframe::App for Custom3d {
 pub fn gpu_picking_system(
     device: Res<WgpuDevice>,
     queue: Res<WgpuQueue>,
-    mut gpu_picking: ResMut<gpu_picking::GPUPicking>,
+    mut gpu_picking: ResMut<GPUPicking>,
     input: Res<Input>,
     egui_ctx: Res<EguiCtx>,
+    mut commands: Commands,
 ) {
-    // Only trigger picking if UI doesn't want pointer input
-    if egui_ctx.wants_pointer_input() {
+    device.poll(PollType::Poll);
+
+    // --- Part 1: Check for and process results from the previous frame ---
+    let pick_op_completed_this_frame = gpu_picking.check_and_update_result();
+
+    if let Some(entity_indices) = gpu_picking.get_last_result() {
+        println!("[GPU Picking] Received result with {} entities.", entity_indices.len());
+        for &index in entity_indices {
+            if let Ok(entity_commands) = commands.get_entity(Entity::from_raw(index)) {
+                 println!("[GPU Picking] Selecting entity {:?}", entity_commands.id());
+            
+            }
+        }
+        gpu_picking.clear_result();
+    }
+
+    // --- Part 2: Check for new input to start a new picking operation ---
+    if egui_ctx.wants_pointer_input() || gpu_picking.is_picking_in_progress() || pick_op_completed_this_frame {
         return;
     }
 
-    // Check for left mouse button click
     if input.0.pointer.primary_pressed() {
-        // Get mouse position
         if let Some(pos) = input.0.pointer.latest_pos() {
             let x = pos.x.round() as u32;
             let y = pos.y.round() as u32;
             
-            print!("[GPU Picking] Mouse click at ({x}, {y})");
-            gpu_picking.set_pick_coordinates(x, y);
-            
-            // Encode pick commands and submit if needed
-            if let Some(pick_commands) = gpu_picking.encode_pick_commands(&device, &queue) {
-                queue.submit(std::iter::once(pick_commands));
-                gpu_picking.start_async_readback();
-                print!("[GPU Picking] Pick commands submitted");
-            }
+            // Call the single, merged pick function.
+            gpu_picking.pick(&device, &queue, (x, y), 5);
         }
     }
 }

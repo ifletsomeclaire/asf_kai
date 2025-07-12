@@ -314,29 +314,52 @@ pub fn setup_tonemapping_pass_system(
     });
 }
 
-pub fn clear_hdr_texture_system(
+
+
+pub fn clear_hdr_and_id_texture_system(
     device: Res<WgpuDevice>,
     queue: Res<WgpuQueue>,
     hdr_texture: Res<HdrTexture>,
+    id_texture: Res<IdTexture>,
+    depth_texture: Res<DepthTexture>,
 ) {
-    let mut encoder = device
-        .0
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("clear_hdr_texture_encoder"),
-        });
+    
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("clear_textures_encoder"),
+    });
+   
+    // Clear both HDR and ID textures in one pass
     encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("clear_hdr_texture_pass"),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: &hdr_texture.view,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+        label: Some("clear_textures_pass"),
+        color_attachments: &[
+            Some(wgpu::RenderPassColorAttachment {
+                view: &hdr_texture.view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            }),
+            Some(wgpu::RenderPassColorAttachment {
+                view: &id_texture.view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            }),
+        ],
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            view: &depth_texture.view,
+            depth_ops: Some(wgpu::Operations {
+                load: wgpu::LoadOp::Clear(1.0),
                 store: wgpu::StoreOp::Store,
-            },
-        })],
-        depth_stencil_attachment: None,
+            }),
+            stencil_ops: None,
+        }),
         timestamp_writes: None,
         occlusion_query_set: None,
     });
-    queue.0.submit(Some(encoder.finish()));
+
+    queue.submit(Some(encoder.finish()));
 }

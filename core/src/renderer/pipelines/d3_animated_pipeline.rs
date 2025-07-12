@@ -349,7 +349,7 @@ pub fn render_d3_animated_pipeline_system(
                     view: &id_texture.view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        load: wgpu::LoadOp::Load,  // Changed from Clear to Load
                         store: wgpu::StoreOp::Store,
                     },
                 }),
@@ -357,7 +357,7 @@ pub fn render_d3_animated_pipeline_system(
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &depth_texture.view,
                 depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
+                    load: wgpu::LoadOp::Load,  // Changed from Clear to Load
                     store: wgpu::StoreOp::Store,
                 }),
                 stencil_ops: None,
@@ -379,12 +379,4 @@ pub fn render_d3_animated_pipeline_system(
 
     queue.submit(Some(encoder.finish()));
     
-    // GPU picking integration
-    // if let Some(mut gpu_picking) = world.get_resource_mut::<gpu_picking::GPUPicking>() {
-    //     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-    //         label: Some("GPU Picking Encoder"),
-    //     });
-    //     gpu_picking.pick(&queue, &mut encoder);
-    //     queue.submit(Some(encoder.finish()));
-    // }
 }

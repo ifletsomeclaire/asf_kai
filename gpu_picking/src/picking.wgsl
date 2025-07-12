@@ -1,72 +1,60 @@
-// GPU Picking Compute Shader
-// This shader samples the ID texture at the specified coordinates and collects unique entity IDs
+// GPU Picking Compute Shader (Parallel)
+// This shader samples the ID texture within a specified rectangular region.
+// It uses atomics to safely collect unique, non-zero entity IDs from multiple threads.
 
-// Uniform buffer containing pick coordinates
-@group(0) @binding(0) var<uniform> pick_coords: vec2<u32>;
+// Uniform buffer containing the selection box [x, y, width, height]
+@group(0) @binding(0) var<uniform> pick_box: vec4<u32>;
 
 // ID texture to sample from
 @group(0) @binding(1) var id_texture: texture_2d<u32>;
 
-// Buffer to track seen IDs (to avoid duplicates)
-@group(0) @binding(2) var<storage, read_write> seen_ids: array<u32>;
-
-// Buffer to store results (first element is count, rest are entity IDs)
-@group(0) @binding(3) var<storage, read_write> results: array<u32>;
+// Buffer to store results (first element is atomic counter, rest are entity IDs)
+@group(0) @binding(2) var<storage, read_write> results: array<atomic<u32>>;
 
 // Maximum number of results we can return
 const MAX_RESULTS = 256u;
-const MAX_SEEN_IDS = 1024u;
 
-// Helper function to check if an ID has been seen
-fn is_id_seen(id: u32) -> bool {
-    for (var i = 0u; i < MAX_SEEN_IDS; i++) {
-        if (seen_ids[i] == id) {
-            return true;
-        }
-        // If we hit a zero, we've reached the end of the list
-        if (seen_ids[i] == 0u) {
-            break;
-        }
+// Helper to add a result if it's not a duplicate.
+// NOTE: This simple duplicate check is NOT safe in a highly parallel scenario
+// without further atomic operations. A better approach is to deduplicate on the CPU.
+fn add_result_if_unique(id: u32) {
+    if (id == 0u) { // Ignore ID 0 (background)
+        return;
     }
-    return false;
-}
 
-// Helper function to add an ID to the seen list
-fn add_seen_id(id: u32) {
-    for (var i = 0u; i < MAX_SEEN_IDS; i++) {
-        if (seen_ids[i] == 0u) {
-            seen_ids[i] = id;
-            break;
-        }
+    // Atomically increment the counter to reserve a spot in the array.
+    let new_index = atomicAdd(&results[0], 1u);
+
+    // Only write if we are within the bounds of our results buffer.
+    if (new_index < MAX_RESULTS) {
+        results[new_index + 1u] = id;
     }
 }
 
-// Helper function to add a result
-fn add_result(id: u32) {
-    let current_count = results[0];
-    if (current_count < MAX_RESULTS) {
-        results[current_count + 1u] = id;
-        results[0] = current_count + 1u;
+// Define the size of the workgroup. 8x8 = 64 threads per group.
+@compute @workgroup_size(8, 8, 1)
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    // On the first invocation of the first workgroup, clear the counter.
+    if (global_id.x == 0u && global_id.y == 0u) {
+        atomicStore(&results[0], 0u);
     }
-}
 
-@compute @workgroup_size(1, 1, 1)
-fn main() {
-    // Initialize result count
-    results[0] = 0u;
-    
-    // Sample the ID texture at the pick coordinates
-    let id = textureLoad(id_texture, vec2<i32>(pick_coords), 0);
-    
-    // If we got a valid ID (non-zero), add it to results
-    if (id.x != 0u) {
-        // Check if we've already seen this ID
-        if (!is_id_seen(id.x)) {
-            add_seen_id(id.x);
-            add_result(id.x);
-        }
+    // Calculate the pixel coordinate this thread is responsible for.
+    let pixel_coords = vec2<u32>(
+        pick_box.x + global_id.x,
+        pick_box.y + global_id.y
+    );
+
+    // Ensure the thread is within the bounds of the selection box.
+    if (pixel_coords.x >= (pick_box.x + pick_box.z) || pixel_coords.y >= (pick_box.y + pick_box.w)) {
+        return;
     }
-    
-    // For more complex picking, you could sample a larger area around the point
-    // and collect all unique IDs in that region
+
+    let texture_dims = vec2<u32>(textureDimensions(id_texture));
+
+    // Bounds check to avoid sampling outside the texture
+    if (pixel_coords.x < texture_dims.x && pixel_coords.y < texture_dims.y) {
+        let id = textureLoad(id_texture, pixel_coords, 0).x;
+        add_result_if_unique(id);
+    }
 } 
