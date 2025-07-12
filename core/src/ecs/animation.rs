@@ -97,12 +97,12 @@ pub fn animation_system(
             player.playing = false;
         }
         
-        let current_animation_time_in_ticks = player.current_time as f64 * current_animation.ticks_per_second;
+        let current_animation_time_in_ticks = player.current_time * current_animation.ticks_per_second;
         let model_matrix = transform.compute_matrix();
 
         log::debug!("[Animation] -> Time: {:.3}s -> {:.3}s (duration: {:.3}s)", 
             old_time, player.current_time, duration_in_seconds);
-        log::debug!("[Animation] -> Animation time in ticks: {:.3}", current_animation_time_in_ticks);
+        log::debug!("[Animation] -> Animation time in ticks: {current_animation_time_in_ticks:.3}");
 
         if let Some(skeleton) = &asset_server.animated_meshlet_manager.skeletons.get(&instance.model_name) {
             log::debug!("[Animation] -> Skeleton has {} bones", skeleton.bones.len());
@@ -126,8 +126,8 @@ pub fn animation_system(
             let next_anim_name = player.next_animation.clone();
             if let Some(next_anim_name) = &next_anim_name {
                 if let Some(next_animation) = asset_server.animated_meshlet_manager.animations.get(next_anim_name) {
-                    let next_duration_in_seconds = next_animation.duration_in_ticks as f64 / next_animation.ticks_per_second as f64;
-                    let next_animation_time_in_ticks = player.next_time as f64 * next_animation.ticks_per_second;
+                    let next_duration_in_seconds = next_animation.duration_in_ticks / next_animation.ticks_per_second;
+                    let next_animation_time_in_ticks = player.next_time * next_animation.ticks_per_second;
 
                     // Calculate poses for next animation
                     let next_local_poses: Vec<Mat4> = skeleton.bones.iter().map(|bone| {
@@ -194,7 +194,7 @@ fn calculate_bone_transform(animation: &Animation, bone_name: &str, time_in_tick
     } else {
         // If no animation channel affects this bone, return the bone's bind pose transform
         if bone_name.contains("Armature") || bone_name.contains("Bone") {
-            log::debug!("[Interpolation] Bone '{}': using default transform (no animation channel)", bone_name);
+            log::debug!("[Interpolation] Bone '{bone_name}': using default transform (no animation channel)");
         }
         default_transform
     }
@@ -312,7 +312,7 @@ fn find_interpolated_rotation(time_in_ticks: f64, keys: &[RotationKey]) -> Optio
 
     // **FIX QUATERNION FLIPS**: Check the dot product. A negative value means the slerp will take the "long way around", causing a flip.
     // Instead of negating, use a smoother transition to avoid creating very small rotation values
-    let mut next_quat_for_interp = next_key.rotation;
+    let next_quat_for_interp = next_key.rotation;
     let dot = prev_key.rotation.dot(next_quat_for_interp);
     if dot < 0.0 {
         // Instead of negating, use a smoother interpolation that avoids the flip

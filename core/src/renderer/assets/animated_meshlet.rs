@@ -82,7 +82,7 @@ impl AnimatedMeshletManager {
         // Log animation details
         log::info!("[Asset Loading] Found {} animations in the database:", animations.len());
         for (anim_name, animation) in &animations {
-            log::info!("  Animation: '{}'", anim_name);
+            log::info!("  Animation: '{anim_name}'");
             log::info!("    Duration: {} ticks ({} seconds)", 
                 animation.duration_in_ticks, 
                 animation.duration_in_ticks as f32 / animation.ticks_per_second as f32);

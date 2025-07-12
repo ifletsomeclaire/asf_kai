@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use redb::Database;
 use russimp::scene::{Scene, PostProcess};
 use types::{MODEL_TABLE, TEXTURE_TABLE, ANIMATED_MODEL_TABLE, ANIMATION_TABLE, Model};
-use log;
 
 pub struct ModelDatabase {
     db: Database,

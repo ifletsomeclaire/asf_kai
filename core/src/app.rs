@@ -7,7 +7,6 @@ use bevy_transform::{
 use eframe::egui::{self};
 use glam::Mat4;
 use std::sync::Arc;
-use log;
 
 use crate::{
     config::Config,
@@ -117,7 +116,7 @@ impl Custom3d {
         let asset_server = world.resource::<AssetServer>();
         let d3_animated_pipeline = D3AnimatedPipeline::new(
             &device,
-            &asset_server,
+            asset_server,
             wgpu::TextureFormat::Rgba16Float,
         );
 
@@ -202,13 +201,13 @@ impl Custom3d {
         let asset_server = world.resource::<AssetServer>();
         log::info!("[App] Available animated models:");
         for model_name in asset_server.animated_meshlet_manager.model_meshlets.keys() {
-            log::info!("  - {}", model_name);
+            log::info!("  - {model_name}");
         }
 
         // Debug: Print available animations
         log::info!("[App] Available animations:");
         for anim_name in asset_server.animated_meshlet_manager.animations.keys() {
-            log::info!("  - {}", anim_name);
+            log::info!("  - {anim_name}");
         }
 
         // Debug: Print skeleton information
@@ -322,7 +321,7 @@ pub fn gpu_picking_system(
             let x = pos.x.round() as u32;
             let y = pos.y.round() as u32;
             
-            print!("[GPU Picking] Mouse click at ({}, {})", x, y);
+            print!("[GPU Picking] Mouse click at ({x}, {y})");
             gpu_picking.set_pick_coordinates(x, y);
             
             // Encode pick commands and submit if needed

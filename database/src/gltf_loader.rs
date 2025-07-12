@@ -1,15 +1,11 @@
-use gltf;
-use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
+use glam::{Mat4, Quat, Vec2, Vec3};
 use image::ImageEncoder;
 use std::collections::HashMap;
-use std::fs;
 use std::path::Path;
-use std::io::Write;
 use types::{
     AnimatedMesh, AnimatedModel, Animation, AnimationChannel, Bone, Mesh, Meshlet, Meshlets,
     Model, PositionKey, RotationKey, ScaleKey, Skeleton, SkinnedVertex, Vertex, AABB,
 };
-use log;
 
 pub fn load_gltf_model<P: AsRef<Path>>(
     path: P,
@@ -37,7 +33,7 @@ pub fn load_gltf_model<P: AsRef<Path>>(
 
     // Process textures from the imported images
     for (idx, image) in images.iter().enumerate() {
-        let texture_name = format!("{}_texture_{}.png", model_name, idx);
+        let texture_name = format!("{model_name}_texture_{idx}.png");
         log::info!("[GLTF] Processing texture {}: {}x{}, format: {:?}",
                  idx, image.width, image.height, image.format);
 
@@ -173,7 +169,7 @@ fn process_static_gltf(
         log::info!("[GLTF] No meshes found through node traversal, processing meshes directly");
         for mesh in document.meshes() {
             for primitive in mesh.primitives() {
-                let unique_mesh_name = format!("{}-mesh-{}", model_name, mesh_counter);
+                let unique_mesh_name = format!("{model_name}-mesh-{mesh_counter}");
                 mesh_counter += 1;
 
                 if let Ok(processed_mesh) = process_primitive(
@@ -387,7 +383,7 @@ fn process_animated_gltf(
     log::info!("[GLTF] Skeleton has {} joints", joints.len());
 
     for (idx, joint) in joints.iter().enumerate() {
-        let bone_name = joint.name().unwrap_or(&format!("Bone_{}", idx)).to_string();
+        let bone_name = joint.name().unwrap_or(&format!("Bone_{idx}")).to_string();
         bone_map.insert(joint.index(), idx);
         node_to_bone.insert(joint.index(), idx);
 
@@ -401,7 +397,7 @@ fn process_animated_gltf(
                 .unwrap_or(Mat4::IDENTITY),
         });
 
-        log::info!("[GLTF]    - Joint {}: {}", idx, bone_name);
+        log::info!("[GLTF]    - Joint {idx}: {bone_name}");
     }
 
     // Second pass: establish parent relationships
@@ -410,7 +406,7 @@ fn process_animated_gltf(
         for (potential_parent_idx, potential_parent) in joints.iter().enumerate() {
             if potential_parent.children().any(|child| child.index() == joint.index()) {
                 bones[idx].parent_index = Some(potential_parent_idx);
-                log::info!("[GLTF]        - Bone {} parent is {}", idx, potential_parent_idx);
+                log::info!("[GLTF]        - Bone {idx} parent is {potential_parent_idx}");
                 break;
             }
         }
@@ -696,12 +692,12 @@ fn process_gltf_animation(
         } else {
             let node_name_owned = match target_node.name() {
                 Some(name) => name.to_string(),
-                None => format!("Node_{}", node_index),
+                None => format!("Node_{node_index}"),
             };
             if skeleton.bones.iter().any(|b| b.name == node_name_owned) {
                 node_name_owned
             } else {
-                log::warn!("[GLTF]        - Skipping channel for non-bone node: {}", node_name_owned);
+                log::warn!("[GLTF]        - Skipping channel for non-bone node: {node_name_owned}");
                 continue;
             }
         };
@@ -899,15 +895,15 @@ fn validate_and_fix_animation_data(
         let has_keyframes = !channel.position_keys.is_empty() || !channel.rotation_keys.is_empty() || !channel.scale_keys.is_empty();
 
         if has_keyframes {
-            if channel.position_keys.first().map_or(true, |k| k.time > EPSILON) {
+            if channel.position_keys.first().is_none_or(|k| k.time > EPSILON) {
                 let first_pos = channel.position_keys.first().map_or(Vec3::ZERO, |k| k.position);
                 channel.position_keys.insert(0, PositionKey { time: 0.0, position: first_pos });
             }
-            if channel.rotation_keys.first().map_or(true, |k| k.time > EPSILON) {
+            if channel.rotation_keys.first().is_none_or(|k| k.time > EPSILON) {
                 let first_rot = channel.rotation_keys.first().map_or(Quat::IDENTITY, |k| k.rotation);
                 channel.rotation_keys.insert(0, RotationKey { time: 0.0, rotation: first_rot });
             }
-            if channel.scale_keys.first().map_or(true, |k| k.time > EPSILON) {
+            if channel.scale_keys.first().is_none_or(|k| k.time > EPSILON) {
                 let first_scale = channel.scale_keys.first().map_or(Vec3::ONE, |k| k.scale);
                 channel.scale_keys.insert(0, ScaleKey { time: 0.0, scale: first_scale });
             }

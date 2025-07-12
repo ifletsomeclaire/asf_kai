@@ -2,7 +2,6 @@ use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use log;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CameraConfig {

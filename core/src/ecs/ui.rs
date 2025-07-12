@@ -76,7 +76,7 @@ pub fn ui_system(mut p: UiSystemParams) {
         } else {
             0.0
         };
-        ui.label(format!("FPS: {:.1}", fps));
+        ui.label(format!("FPS: {fps:.1}"));
         ui.separator();
         ui.checkbox(&mut p.ui_state.render_triangle, "Render Triangle");
         ui.checkbox(&mut p.ui_state.render_model, "Render Model");
@@ -134,7 +134,7 @@ pub fn ui_system(mut p: UiSystemParams) {
                 if ui.add(egui::Slider::new(&mut speed, 0.0..=5.0).text("Speed")).changed() {
                     player.speed = speed;
                 }
-                ui.label(format!("Current speed: {:.2}x", speed));
+                ui.label(format!("Current speed: {speed:.2}x"));
                 
                 // Play/Pause toggle
                 if ui.checkbox(&mut player.playing, "Playing").changed() {
@@ -159,14 +159,13 @@ pub fn ui_system(mut p: UiSystemParams) {
                 ui.label("Quick Transitions:");
                 ui.horizontal(|ui| {
                     for (j, anim_name) in available_animations.iter().take(3).enumerate() {
-                        if ui.button(format!("{}", j + 1)).clicked() {
-                            if anim_name != &player.animation_name {
+                        if ui.button(format!("{}", j + 1)).clicked()
+                            && anim_name != &player.animation_name {
                                 player.next_animation = Some(anim_name.clone());
                                 player.blend_factor = 0.0;
                                 player.next_time = 0.0;
                                 log::info!("[UI] Triggered blend to '{}' for entity {}", anim_name, i + 1);
                             }
-                        }
                     }
                 });
             }

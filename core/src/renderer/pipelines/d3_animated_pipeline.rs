@@ -217,8 +217,7 @@ pub fn render_d3_animated_pipeline_system(
                     meshlet_group_idx, model_meshlets.meshlet_indices.len(), model_meshlets.texture_id);
                 for (meshlet_idx, &meshlet_id) in model_meshlets.meshlet_indices.iter().enumerate() {
                     if meshlet_idx < 3 { // Only print first 3 for brevity
-                        log::debug!("[Animated Render]     Meshlet[{}]: id={}, bone_set_id={}", 
-                            meshlet_idx, meshlet_id, instance_index);
+                        log::debug!("[Animated Render]     Meshlet[{meshlet_idx}]: id={meshlet_id}, bone_set_id={instance_index}");
                     }
                     // Create a new draw command with the correct, frame-specific IDs.
                     draw_commands.push(AnimatedDrawCommand {

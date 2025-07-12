@@ -10,7 +10,6 @@
 use bevy_derive::{Deref, DerefMut};
 use bevy_ecs::prelude::*;
 use std::sync::Arc;
-use log;
 
 // --- 1. Define the individual asset types ---
 #[derive(Debug)]
